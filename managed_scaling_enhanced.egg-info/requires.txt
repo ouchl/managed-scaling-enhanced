@@ -1,0 +1,7 @@
+boto3==1.34.14
+loguru==0.7.2
+requests==2.31.0
+sqlalchemy==2.0.29
+apscheduler==3.10.4
+sqlalchemy==2.0.29
+click==8.1.7
