@@ -28,7 +28,7 @@ def add(cluster_id, cluster_name, cluster_group, configuration):
     session = Session()
     config_obj = config.Config(**json.loads(configuration))
     cluster = Cluster(id=cluster_id, cluster_name=cluster_name,
-                      cluster_group=cluster_group, configuration=json.dumps(config_obj.__dict__))
+                      cluster_group=cluster_group, configuration=config_obj.__dict__)
     session.add(cluster)
     session.commit()
     session.close()

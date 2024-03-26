@@ -7,6 +7,7 @@ class Config:
     minimumUnits: Decimal = 300
     maximumUnits: Decimal = 1000
     maximumOnDemandUnits: Decimal = 160
+    spotSwitchOnDemand: bool = False
     # maximumOnDemandInstancesNumValue: Decimal = 160
     spotInstancesTimeout: Decimal = 60*30
     scaleOutAvgYARNMemoryAvailablePercentageValue: Decimal = 30

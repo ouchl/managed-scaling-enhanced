@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Optional
 import requests
 import random
+import orjson
 
 
 cw_client = boto3.client('cloudwatch')
@@ -28,9 +29,12 @@ class Metric:
     current_apps_running: Optional[int]
     current_reserved_virtual_cores: Optional[int]
 
+    def __repr__(self):
+        return orjson.dumps(self.__dict__).decode("utf-8")
+
 
 def get_current_yarn_metric(cluster: Cluster, metric_name):
-    cluster_details = cluster.cluster_info_obj
+    cluster_details = cluster.cluster_info
 
     # 获取所有主节点的公共DNS
     if 'MasterPublicDnsNameList' in cluster_details:

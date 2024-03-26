@@ -29,8 +29,8 @@ def update_cluster_status(cluster_id: str, session=Session()):
         logger.warning(f'Cluster {cluster_id} does not exist in database.')
         return
     cluster.cluster_name = cluster_info['Name']
-    cluster.cluster_info = orjson.dumps(cluster_info).decode("utf-8")
-    cluster.managed_scaling_policy = orjson.dumps(ms_policy).decode("utf-8")
+    cluster.cluster_info = cluster_info
+    cluster.managed_scaling_policy = ms_policy
     session.commit()
 
 
@@ -39,15 +39,19 @@ def do_run(run_id: int, cluster_id: str, session):
     logger.info(f'Getting cluster {cluster.id} metrics...')
     cluster_metrics = metrics.get_metrics(cluster)
     session.add(Event(run_id=run_id, action='GetMetrics', cluster_id=cluster.id,
-                      event_time=datetime.utcnow(), data=str(cluster_metrics.__dict__)))
+                      event_time=datetime.utcnow(), data=cluster_metrics
+                      ))
     session.commit()
     scale_out_flags = get_scale_out_flags(cluster, cluster_metrics)
     session.add(Event(run_id=run_id, action='GetScaleOutFlags', cluster_id=cluster.id,
-                      event_time=datetime.utcnow(), data=str(scale_out_flags.__dict__)))
+                      event_time=datetime.utcnow(), data=scale_out_flags
+                      ))
     scale_in_flags = get_scale_in_flags(cluster, cluster_metrics)
     session.add(Event(run_id=run_id, action='GetScaleInFlags', cluster_id=cluster.id,
-                      event_time=datetime.utcnow(), data=str(scale_in_flags.__dict__)))
+                      event_time=datetime.utcnow(), data=scale_in_flags
+                      ))
     session.commit()
+
     if scale_out_flags.OverallFlag:
         scaled_out = scale_out(cluster=cluster, metrics=cluster_metrics)
         if scaled_out:
@@ -60,6 +64,8 @@ def do_run(run_id: int, cluster_id: str, session):
             logger.info(f'Cluster {cluster.id} scaled in successfully.')
             session.add(Event(run_id=run_id, action='ScaleIn', cluster_id=cluster.id,
                               event_time=datetime.utcnow(), data=cluster.managed_scaling_policy))
+    else:
+        logger.info(f'Cluster {cluster.id} is good. Do nothing in this run.')
     session.commit()
 
 
@@ -70,9 +76,11 @@ def run():
     for cluster in clusters:
         logger.info(f'Updating cluster {cluster.id} status...')
         update_cluster_status(cluster_id=cluster.id, session=session)
+        session.add(Event(run_id=run_id, action='GetCluster', cluster_id=cluster.id,
+                          event_time=datetime.utcnow(), data=cluster.to_dict()))
     session.commit()
     active_clusters = [cluster.id for cluster in clusters
-                       if cluster.cluster_info_obj and cluster.cluster_info_obj['Status']['State'] in ('RUNNING', 'WAITING')]
+                       if cluster.cluster_info and cluster.cluster_info['Status']['State'] in ('RUNNING', 'WAITING')]
     session.close()
     for cluster_id in active_clusters:
         try:

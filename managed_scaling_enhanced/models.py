@@ -4,6 +4,7 @@ from sqlalchemy import Column, String, JSON, DateTime, Integer
 
 from managed_scaling_enhanced.config import Config
 from managed_scaling_enhanced.database import Base, engine
+import orjson
 
 
 class Cluster(Base):
@@ -23,38 +24,34 @@ class Cluster(Base):
 
     @property
     def config_obj(self):
-        return Config(**json.loads(self.configuration))
+        return Config(**self.configuration)
 
-    @property
-    def cluster_info_obj(self):
-        return json.loads(self.cluster_info)
-
-    @property
-    def managed_scaling_policy_obj(self):
-        return json.loads(self.managed_scaling_policy)
-
-    def modify_scaling_policy(self, max_units, max_od_units=None):
-        policy = self.managed_scaling_policy_obj
-        policy['MaximumCapacityUnits'] = max_units
+    def modify_scaling_policy(self, max_units=None, max_od_units=None):
+        policy = self.managed_scaling_policy
+        if max_units:
+            policy['MaximumCapacityUnits'] = max_units
         if max_od_units:
             policy['MaximumOnDemandCapacityUnits'] = max_od_units
-        self.managed_scaling_policy = json.dumps(policy)
+        self.managed_scaling_policy = policy
 
     @property
     def scaling_policy_max_units(self):
-        return self.managed_scaling_policy_obj['ComputeLimits']['MaximumCapacityUnits']
+        return self.managed_scaling_policy['ComputeLimits']['MaximumCapacityUnits']
 
     @property
     def scaling_policy_min_units(self):
-        return self.managed_scaling_policy_obj['ComputeLimits']['MaximumCapacityUnits']
+        return self.managed_scaling_policy['ComputeLimits']['MaximumCapacityUnits']
 
     @property
     def scaling_policy_max_od_units(self):
-        return self.managed_scaling_policy_obj['ComputeLimits']['MaximumOnDemandCapacityUnits']
+        return self.managed_scaling_policy['ComputeLimits']['MaximumOnDemandCapacityUnits']
 
     @property
     def scaling_policy_max_core_units(self):
-        return self.managed_scaling_policy_obj['ComputeLimits']['MaximumCoreCapacityUnits']
+        return self.managed_scaling_policy['ComputeLimits']['MaximumCoreCapacityUnits']
+
+    def __repr__(self):
+        return orjson.dumps(self.to_dict()).decode("utf-8")
 
 
 class Event(Base):
@@ -65,7 +62,7 @@ class Event(Base):
     action = Column(String)
     cluster_id = Column(Integer)
     event_time = Column(DateTime)
-    data = Column(String)
+    data = Column(JSON)
 
 
 Base.metadata.create_all(engine)
