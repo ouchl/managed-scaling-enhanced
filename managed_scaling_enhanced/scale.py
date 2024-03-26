@@ -141,8 +141,15 @@ def scale_in(cluster: Cluster, metrics: Metric) -> bool:
         logger.info(
             f"⌛️ Skipping scale in operation due to cooldown period ({config.scaleInCooldownSeconds} seconds).")
         return False
+
+    instance_fleets = emr_client.list_instance_fleets(ClusterId=cluster.id)['InstanceFleets']
     # od 不小于 core nodes 数量
-    max_od_units = max(cluster.scaling_policy_max_core_units, cluster.scaling_policy_max_od_units)
+    max_od_units = cluster.scaling_policy_max_od_units
+    for fleet in instance_fleets:
+        if fleet['InstanceFleetType'] == 'CORE':
+            core_nodes = fleet['ProvisionedOnDemandCapacity']  # provisioned or target?
+            max_od_units = max(core_nodes, max_od_units)
+    # max_od_units = max(cluster.scaling_policy_max_core_units, cluster.scaling_policy_max_od_units)
     if metrics.current_apps_pending == 0:
         logger.info("No pending applications, setting minimum capacity.")
         # od的数量没有减少，why？
@@ -160,7 +167,6 @@ def scale_in(cluster: Cluster, metrics: Metric) -> bool:
     cluster.last_scale_in_ts = current_time
 
     # 修改 Instance Fleets
-    instance_fleets = emr_client.list_instance_fleets(ClusterId=cluster.id)['InstanceFleets']
     for fleet in instance_fleets:
         if fleet['InstanceFleetType'] == 'TASK':
             emr_client.modify_instance_fleet(
