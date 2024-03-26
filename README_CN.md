@@ -1,6 +1,5 @@
 以下是readme.md的中文版本:
 
-```md
 # managed-scaling-enhanced
 一个高级版本的managed scaling,可以动态调整资源以满足工作负载需求,提高效率和精度。
 
@@ -9,55 +8,42 @@
 
 ## 2. 用户指南
 
-### 2.1 初始化参数存储
-在使用managed-scaling-enhanced之前,您需要初始化参数存储。
+### 2.1 启动systemd服务
+更新[managed-scaling-enhanced.service.template](managed-scaling-enhanced.service.template)  
+/path/to/your/start.sh改为项目安装路径，后面参数表示调度时间，单位秒  
+Environment="AWS_DEFAULT_REGION="改为当前AWS region  
+修改后的service文件保存到/etc/systemd/system/managed-scaling-enhanced.service  
+最后运行  
+```zsh
+sudo systemctl daemon-reload
+sudo systemctl enable managed-scaling-enhanced
+sudo systemctl start managed-scaling-enhanced
+```
+
+### 2.2. managed-scaling-enhanced
+Managed Scaling Enhanced CLI
 
 ```zsh
-python create_parameter_store.py
+[ec2-user@ip-10-0-33-25 managed-scaling-enhanced]$ source venv/bin/activate
+(venv) [ec2-user@ip-10-0-33-25 managed-scaling-enhanced]$ mse --help
+Usage: mse [OPTIONS] COMMAND [ARGS]...
+
+Options:
+  --help  Show this message and exit.
+
+Commands:
+  add-cluster       Add an EMR cluster to be managed by this tool.
+  delete-cluster    Delete an EMR cluster.
+  describe-cluster  Describe an EMR cluster by cluster id.
+  list-clusters     List info of all EMR clusters.
+  start             Start background scheduled job.
 ```
-
-具体参数
-```python
-    parameters = {
-        f'{prefix}/minimumUnits': 320,  # max nuit 的最小值
-        f'{prefix}/maximumUnits': 1000, # max nuit 的最大值
-
-        f'{prefix}/spotInstancesTimeout': 60*30,
-        f'{prefix}/monitorIntervalSeconds': 30,
-        f'{prefix}/actionIntervalSeconds': 30,
-
-        f'{prefix}/scaleOutAvgYARNMemoryAvailablePercentageValue': 33,
-        f'{prefix}/scaleOutAvgYARNMemoryAvailablePercentageMinutes': 5,
-        f'{prefix}/scaleOutAvgCapacityRemainingGBValue': 256,
-        f'{prefix}/scaleOutAvgCapacityRemainingGBMinutes': 5,
-        f'{prefix}/scaleOutAvgPendingAppNumValue': 3,
-        f'{prefix}/scaleOutAvgPendingAppNumMinutes': 5,
-        f'{prefix}/scaleOutAvgTaskNodeCPULoadValue': 60,
-        f'{prefix}/scaleOutAvgTaskNodeCPULoadMinutes': 15,
-
-        f'{prefix}/scaleInAvgYARNMemoryAvailablePercentageValue': 40,
-        f'{prefix}/scaleInAvgYARNMemoryAvailablePercentageMinutes': 3,
-        f'{prefix}/scaleInAvgCapacityRemainingGBValue': 512,
-        f'{prefix}/scaleInAvgCapacityRemainingGBMinutes': 3,
-        f'{prefix}/scaleInAvgPendingAppNumValue': 2,
-        f'{prefix}/scaleInAvgPendingAppNumMinutes': 2,
-        f'{prefix}/scaleInAvgTaskNodeCPULoadValue': 40,
-        f'{prefix}/scaleInAvgTaskNodeCPULoadMinutes': 15,
-
-        f'{prefix}/scaleOutFactor': 1.5,
-        f'{prefix}/scaleInFactor': 1.7,   
-
-        f'{prefix}/maximumOnDemandInstancesNumValue': 160,  # 针对defalut情况下：on_demand instance num = core node num   
-
-        f'{prefix}/scaleOutCooldownSeconds': 60 * 7,
-        f'{prefix}/scaleInCooldownSeconds': 60 * 5,      
-    }
+添加cluster
+```zsh
+(venv) [ec2-user@ip-10-0-33-25 managed-scaling-enhanced]$ mse add-cluster --cluster-id j-xxxxxx
 ```
-执行后,可以在参数存储中看到参数列表。
-![Parameter Store](imgs/ParameterStore.png)
-您可以为不同的集群配置创建多个不同的前缀参数。
-
-#### 这些参数的意义和作用如下：
+--configuration参数指定扩缩容参数，如果不指定默认参数参考[config.py](managed_scaling_enhanced%2Fconfig.py)  
+这些参数的意义和作用如下：
 
 1. minimumUnits和maximumUnits:这两个参数分别设置了集群最大单元数量(MaximumCapacityUnits)的最小值和最大值。minimumUnits确保集群不会缩小到一定规模以下,而maximumUnits则限制了集群可以扩展到的最大规模。 
 2. spotInstancesTimeout:这个参数指定了在补充On-Demand实例之前,需要查看过去多少秒内的MaximumCapacityUnits最小值。如果该最小值大于当前集群的totalVirtualCores,则需要补充On-Demand实例。 
@@ -71,43 +57,9 @@ python create_parameter_store.py
 10. maximumOnDemandInstancesNumValue:这个参数设置了On-Demand实例的最大数量。在缩容操作中,会将MaximumOnDemandCapacityUnits设置为该值。 
 11. scaleOutCooldownSeconds和scaleInCooldownSeconds:这两个参数分别设置了在执行扩容和缩容操作之后的冷却时间(秒)。在冷却时间内,不会执行相应的扩缩容操作。 
 
-
-
-### 2.2. 监控
-在使用managed-scaling-enhanced之前,首先启用监控。
-
-
-需要两个参数:一个是需要监控的集群,另一个是参数存储中的前缀参数集。
-您可以启动多个监控进程,针对不同的集群使用不同的配置。
-该程序将监控数据保存在以集群命名的sqlite文件中,供managed-scaling-enhanced的主程序查询使用。
+删除cluster  
 ```zsh
-$ python yarn_monitor.py --help                                                                
-usage: yarn_monitor.py [-h] --emr-cluster-id EMR_CLUSTER_ID --prefix PREFIX
-
-EMR YARN Metric Monitor
-
-optional arguments:
-  -h, --help            show this help message and exit
-  --emr-cluster-id EMR_CLUSTER_ID
-                        EMR cluster ID
-  --prefix PREFIX       Parameter store prefix
-```
-
-### 2.3. managed-scaling-enhanced
-Managed Scaling Enhanced的主程序
-
-```zsh
-$ python main.py --help                                                                    
-usage: main.py [-h] --emr-id EMR_ID [--prefix PREFIX] [--spot-switch-on-demand SPOT_SWITCH_ON_DEMAND]
-
-Managed Scaling Enhanced for EMR
-
-options:
-  -h, --help            show this help message and exit
-  --emr-id EMR_ID       EMR cluster ID
-  --prefix PREFIX       Parameter prefix (default: managedScalingEnhanced)
-  --spot-switch-on-demand SPOT_SWITCH_ON_DEMAND
-                        Whether to switch to on-demand instances (0: no, 1: yes, default: 0)
+(venv) [ec2-user@ip-10-0-33-25 managed-scaling-enhanced]$ mse delete-cluster --cluster-id j-xxxxxx
 ```
 主程序将根据架构图的逻辑决定是扩展还是缩减,同时将触发时间的记录记录到sqlite中,供未来条件判断使用。
 
