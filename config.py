@@ -6,6 +6,8 @@ from decimal import Decimal
 class Config:
     minimumUnits: Decimal = 300
     maximumUnits: Decimal = 1000
+    maximumOnDemandUnits: Decimal = 160
+    # maximumOnDemandInstancesNumValue: Decimal = 160
     spotInstancesTimeout: Decimal = 60*30
     scaleOutAvgYARNMemoryAvailablePercentageValue: Decimal = 30
     scaleOutAvgYARNMemoryAvailablePercentageMinutes: Decimal = 5
@@ -30,4 +32,3 @@ class Config:
 
     scaleOutCooldownSeconds: Decimal = 60*7
     scaleInCooldownSeconds: Decimal = 60*5
-    maximumOnDemandInstancesNumValue: int = 160

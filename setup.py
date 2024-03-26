@@ -13,7 +13,8 @@ setup(
         'sqlalchemy==2.0.29',
         'apscheduler==3.10.4',
         'sqlalchemy==2.0.29',
-        'click==8.1.7'
+        'click==8.1.7',
+        'orjson==3.9.15'
     ],
     entry_points='''
         [console_scripts]
