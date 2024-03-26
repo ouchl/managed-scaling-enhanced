@@ -1,7 +1,7 @@
 import boto3
 from decimal import Decimal
 from datetime import datetime, timedelta
-from models import Cluster
+from managed_scaling_enhanced.models import Cluster
 import statistics
 from dataclasses import dataclass
 from typing import Optional

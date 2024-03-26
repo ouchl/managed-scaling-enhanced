@@ -2,8 +2,8 @@ import json
 
 from sqlalchemy import Column, String, JSON, DateTime, Integer
 
-from config import Config
-from database import Base, engine
+from managed_scaling_enhanced.config import Config
+from managed_scaling_enhanced.database import Base, engine
 
 
 class Cluster(Base):

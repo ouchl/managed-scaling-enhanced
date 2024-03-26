@@ -1,11 +1,11 @@
 import click
 
-import config
-from database import engine, Session
-from models import Cluster
+from managed_scaling_enhanced import config
+from managed_scaling_enhanced.database import Session
+from managed_scaling_enhanced.models import Cluster
 import json
 from apscheduler.schedulers.background import BackgroundScheduler
-from run import run
+from managed_scaling_enhanced.run import run
 import time
 import logging
 
@@ -89,7 +89,7 @@ def start(schedule_interval):
 
 
 cli.add_command(add, 'add-cluster')
-cli.add_command(list_cluster, 'list-cluster')
+cli.add_command(list_cluster, 'list-clusters')
 cli.add_command(delete_cluster, 'delete-cluster')
 cli.add_command(describe_cluster, 'describe-cluster')
 cli.add_command(start, 'start')

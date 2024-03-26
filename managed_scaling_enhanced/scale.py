@@ -1,7 +1,5 @@
-import json
-
-from models import Cluster
-from metrics import Metric
+from managed_scaling_enhanced.models import Cluster
+from managed_scaling_enhanced.metrics import Metric
 import logging
 from dataclasses import dataclass
 from datetime import datetime

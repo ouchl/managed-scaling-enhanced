@@ -1,0 +1,14 @@
+[Unit]
+Description=Managed Scaling Enhanced
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/path/to/your/start.sh 30
+User=ec2-user
+Restart=on-failure
+RestartSec=5s
+Environment="AWS_DEFAULT_REGION="
+
+[Install]
+WantedBy=multi-user.target

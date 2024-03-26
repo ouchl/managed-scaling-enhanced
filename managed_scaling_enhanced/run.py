@@ -1,11 +1,11 @@
 from datetime import datetime
 import boto3
 from botocore.exceptions import ClientError
-import metrics
-from database import Session
+from managed_scaling_enhanced import metrics
+from managed_scaling_enhanced.database import Session
 import time
-from scale import get_scale_in_flags, get_scale_out_flags, scale_out, scale_in
-from models import Cluster, Event
+from managed_scaling_enhanced.scale import get_scale_in_flags, get_scale_out_flags, scale_out, scale_in
+from managed_scaling_enhanced.models import Cluster, Event
 import logging
 import orjson
 
