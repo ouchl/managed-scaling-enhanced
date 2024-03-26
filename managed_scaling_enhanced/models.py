@@ -58,7 +58,7 @@ class Event(Base):
     __tablename__ = 'events'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    run_id = Column(Integer)
+    run_id = Column(Integer, index=True)
     action = Column(String)
     cluster_id = Column(Integer)
     event_time = Column(DateTime)
