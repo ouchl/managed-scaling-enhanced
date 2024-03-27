@@ -8,10 +8,12 @@ from typing import Optional
 import requests
 import random
 import orjson
+import logging
 
 
 cw_client = boto3.client('cloudwatch')
 emr_client = boto3.client('emr')
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -79,6 +81,7 @@ def get_avg_task_cpu_load(cluster_id, minutes):
         InstanceGroupTypes=['TASK'],
         InstanceStates=['RUNNING']
     )
+    logger.info(f'There are {len(nodes)} task nodes running in cluster {cluster_id}.')
     nodes = [node['Ec2InstanceId'] for node in nodes['Instances']]
     metrics = []
     dimensions = []

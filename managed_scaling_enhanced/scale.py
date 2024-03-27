@@ -30,7 +30,11 @@ def get_scale_out_flags(cluster: Cluster, metrics: Metric):
     yarn_mem_percentage_flag = metrics.ScaleOutAvgYARNMemoryAvailablePercentage <= config.scaleOutAvgYARNMemoryAvailablePercentageValue
     free_mem_flag = metrics.ScaleOutAvgCapacityRemainingGB <= config.scaleOutAvgCapacityRemainingGBValue
     apps_pending_flag = metrics.ScaleOutAvgPendingAppNum >= config.scaleOutAvgPendingAppNumValue
-    cpu_load_flag = metrics.ScaleOutAvgTaskNodeCPULoad >= config.scaleOutAvgTaskNodeCPULoadValue
+    # in case there is no task node
+    if metrics.ScaleOutAvgTaskNodeCPULoad is None:
+        cpu_load_flag = False
+    else:
+        cpu_load_flag = metrics.ScaleOutAvgTaskNodeCPULoad >= config.scaleOutAvgTaskNodeCPULoadValue
     max_unit_flag = cluster.scaling_policy_max_units < config.maximumUnits
     overall_flag = ((yarn_mem_percentage_flag or free_mem_flag or apps_pending_flag)
                     and cpu_load_flag and max_unit_flag)
@@ -50,7 +54,11 @@ def get_scale_in_flags(cluster: Cluster, metrics: Metric):
     yarn_mem_percentage_flag = metrics.ScaleInAvgYARNMemoryAvailablePercentage > config.scaleInAvgYARNMemoryAvailablePercentageValue
     free_mem_flag = metrics.ScaleInAvgCapacityRemainingGB > config.scaleInAvgCapacityRemainingGBValue
     apps_pending_flag = metrics.ScaleInAvgPendingAppNum < config.scaleInAvgPendingAppNumValue
-    cpu_load_flag = metrics.ScaleInAvgTaskNodeCPULoad < config.scaleInAvgTaskNodeCPULoadValue
+    # in case there is no task node
+    if metrics.ScaleOutAvgTaskNodeCPULoad is None:
+        cpu_load_flag = False
+    else:
+        cpu_load_flag = metrics.ScaleOutAvgTaskNodeCPULoad < config.scaleOutAvgTaskNodeCPULoadValue
     max_unit_flag = cluster.scaling_policy_max_units > config.minimumUnits
     overall_flag = ((yarn_mem_percentage_flag or free_mem_flag or apps_pending_flag or cpu_load_flag)
                     and max_unit_flag)
