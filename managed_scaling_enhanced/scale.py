@@ -131,7 +131,7 @@ where action='GetCluster' and cluster_id= :id and run_id >= :ts
 
     cluster.modify_scaling_policy(max_units=new_max_capacity_units, max_od_units=new_max_od_capacity_units)
     # 应用新策略
-    emr_client.put_managed_scaling_policy(cluster.id, cluster.managed_scaling_policy)
+    emr_client.put_managed_scaling_policy(ClusterId=cluster.id, ManagedScalingPolicy=cluster.managed_scaling_policy)
     cluster.last_scale_out_ts = current_time
 
     return True
@@ -182,7 +182,7 @@ def scale_in(cluster: Cluster, metrics: Metric) -> bool:
                 )
     cluster.modify_scaling_policy(max_units=new_max_capacity_units, max_od_units=new_max_od_units)
     # 应用新策略
-    emr_client.put_managed_scaling_policy(cluster.id, cluster.managed_scaling_policy)
+    emr_client.put_managed_scaling_policy(ClusterId=cluster.id, ManagedScalingPolicy=cluster.managed_scaling_policy)
     cluster.last_scale_in_ts = current_time
     return True
 

@@ -3,6 +3,7 @@
   "maximumUnits": 1000,
   "maximumOnDemandUnits": 160,
   "spotSwitchOnDemand": false,
+  "spotSwitchOnDemandFactor": 0.5,
   "spotInstancesTimeout": 1800,
   "scaleOutAvgYARNMemoryAvailablePercentageValue": 30,
   "scaleOutAvgYARNMemoryAvailablePercentageMinutes": 5,
@@ -21,7 +22,9 @@
   "scaleInAvgTaskNodeCPULoadValue": 30,
   "scaleInAvgTaskNodeCPULoadMinutes": 15,
   "scaleOutFactor": 1.5,
+  "scaleOutOnDemandFactor": 1.1,
   "scaleInFactor": 1.7,
+  "scaleInOnDemandFactor": 1.9,
   "scaleOutCooldownSeconds": 420,
   "scaleInCooldownSeconds": 300
 }
