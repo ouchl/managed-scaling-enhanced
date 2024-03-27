@@ -67,7 +67,7 @@ def describe_cluster(cluster_id):
     if not cluster:
         click.echo(f'Cluster {cluster_id} dose not exist!')
         raise SystemExit
-    click.echo(json.dumps(cluster.to_dict()))
+    click.echo(cluster.to_dict())
     session.close()
 
 
