@@ -40,7 +40,7 @@ def list_cluster():
     session = Session()
     clusters = session.query(Cluster).all()
     clusters = [cluster.to_dict() for cluster in clusters]
-    click.echo(json.dumps(clusters))
+    click.echo(clusters)
     session.close()
 
 

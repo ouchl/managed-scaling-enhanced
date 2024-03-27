@@ -27,7 +27,7 @@ class ScaleFlags:
 
 def get_scale_out_flags(cluster: Cluster, metrics: Metric):
     config = cluster.config_obj
-    yarn_mem_percentage_flag = metrics.ScaleOutAvgYARNMemoryAvailablePercentage * 100 <= config.scaleOutAvgYARNMemoryAvailablePercentageValue
+    yarn_mem_percentage_flag = metrics.ScaleOutAvgYARNMemoryAvailablePercentage <= config.scaleOutAvgYARNMemoryAvailablePercentageValue
     free_mem_flag = metrics.ScaleOutAvgCapacityRemainingGB <= config.scaleOutAvgCapacityRemainingGBValue
     apps_pending_flag = metrics.ScaleOutAvgPendingAppNum >= config.scaleOutAvgPendingAppNumValue
     cpu_load_flag = metrics.ScaleOutAvgTaskNodeCPULoad >= config.scaleOutAvgTaskNodeCPULoadValue
@@ -47,7 +47,7 @@ def get_scale_out_flags(cluster: Cluster, metrics: Metric):
 
 def get_scale_in_flags(cluster: Cluster, metrics: Metric):
     config = cluster.config_obj
-    yarn_mem_percentage_flag = metrics.ScaleInAvgYARNMemoryAvailablePercentage * 100 > config.scaleInAvgYARNMemoryAvailablePercentageValue
+    yarn_mem_percentage_flag = metrics.ScaleInAvgYARNMemoryAvailablePercentage > config.scaleInAvgYARNMemoryAvailablePercentageValue
     free_mem_flag = metrics.ScaleInAvgCapacityRemainingGB > config.scaleInAvgCapacityRemainingGBValue
     apps_pending_flag = metrics.ScaleInAvgPendingAppNum < config.scaleInAvgPendingAppNumValue
     cpu_load_flag = metrics.ScaleInAvgTaskNodeCPULoad < config.scaleInAvgTaskNodeCPULoadValue
@@ -126,10 +126,8 @@ where action='GetCluster' and cluster_id= :id and run_id >= :ts
 
         if min_max_capacity_units > metrics.current_total_virtual_cores:
             # 需要补充 On-Demand 实例
-            on_demand_units_to_add = min_max_capacity_units - metrics.current_total_virtual_cores
+            on_demand_units_to_add = (min_max_capacity_units - metrics.current_total_virtual_cores) * config.spotSwitchOnDemandFactor
             new_max_od_capacity_units = cluster.scaling_policy_max_od_units + on_demand_units_to_add
-            cluster.modify_scaling_policy(max_od_units=new_max_od_capacity_units)
-            emr_client.put_managed_scaling_policy(cluster.id, cluster.managed_scaling_policy)
 
     cluster.modify_scaling_policy(max_units=new_max_capacity_units, max_od_units=new_max_od_capacity_units)
     # 应用新策略
@@ -149,8 +147,7 @@ def scale_in(cluster: Cluster, metrics: Metric) -> bool:
         return False
 
     new_max_od_units = cluster.scaling_policy_max_od_units
-    new_max_capacity_units = cluster.scaling_policy_max_units
-    # max_od_units = max(cluster.scaling_policy_max_core_units, cluster.scaling_policy_max_od_units)
+
     if metrics.current_apps_pending == 0:
         logger.info("No pending applications, setting minimum capacity.")
         new_max_capacity_units = config.minimumUnits
