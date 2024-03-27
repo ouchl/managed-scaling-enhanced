@@ -8,6 +8,7 @@ class Config:
     maximumUnits: Decimal = 1000
     maximumOnDemandUnits: Decimal = 160
     spotSwitchOnDemand: bool = False
+    spotSwitchOnDemandFactor: Decimal = 0.5
     # maximumOnDemandInstancesNumValue: Decimal = 160
     spotInstancesTimeout: Decimal = 60*30
     scaleOutAvgYARNMemoryAvailablePercentageValue: Decimal = 30
@@ -29,7 +30,9 @@ class Config:
     scaleInAvgTaskNodeCPULoadMinutes: Decimal = 15
 
     scaleOutFactor: Decimal = 1.5
+    scaleOutOnDemandFactor: Decimal = 1.1
     scaleInFactor: Decimal = 1.7
+    scaleInOnDemandFactor: Decimal = 1.9
 
     scaleOutCooldownSeconds: Decimal = 60*7
     scaleInCooldownSeconds: Decimal = 60*5
