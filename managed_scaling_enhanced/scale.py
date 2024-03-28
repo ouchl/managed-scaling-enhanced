@@ -117,6 +117,8 @@ def scale_out(cluster: Cluster, metrics: Metric) -> bool:
 
         # 确保新的 MaximumOnDemandCapacityUnits 不超过最大限制
         new_max_od_capacity_units = min(new_max_od_capacity_units, config.maximumOnDemandUnits)
+        # 确保od units不超过max units
+        new_max_od_capacity_units = min(new_max_od_capacity_units, new_max_capacity_units)
     else:
         timeout_timestamp = datetime.utcnow() - timedelta(seconds=config.spotInstancesTimeout)
         with Session() as session:
@@ -128,7 +130,7 @@ where action='GetCluster' and cluster_id= :id and run_id >= :ts
 
             min_max_capacity_units = result[0][0]
 
-        if min_max_capacity_units > metrics.current_total_virtual_cores:
+        if min_max_capacity_units is not None and min_max_capacity_units > metrics.current_total_virtual_cores:
             # 需要补充 On-Demand 实例
             on_demand_units_to_add = (min_max_capacity_units - metrics.current_total_virtual_cores) * config.spotSwitchOnDemandFactor
             new_max_od_capacity_units = cluster.scaling_policy_max_od_units + on_demand_units_to_add
@@ -162,8 +164,6 @@ def scale_in(cluster: Cluster, metrics: Metric) -> bool:
         new_max_capacity_units = max(config.minimumUnits, cluster.scaling_policy_max_units - int(
             (metrics.current_total_virtual_cores / metrics.current_apps_running) * config.scaleInFactor))
 
-    instance_fleets = emr_client.list_instance_fleets(ClusterId=cluster.id)['InstanceFleets']
-
     if not config.spotSwitchOnDemand:
         if metrics.current_apps_pending == 0:
             new_max_od_units = cluster.scaling_policy_max_core_units
@@ -174,6 +174,7 @@ def scale_in(cluster: Cluster, metrics: Metric) -> bool:
                 (metrics.current_total_virtual_cores / metrics.current_apps_running) * config.scaleInOnDemandFactor))
 
         # 修改 Instance Fleets
+        instance_fleets = emr_client.list_instance_fleets(ClusterId=cluster.id)['InstanceFleets']
         for fleet in instance_fleets:
             if fleet['InstanceFleetType'] == 'TASK':
                 emr_client.modify_instance_fleet(
@@ -184,6 +185,10 @@ def scale_in(cluster: Cluster, metrics: Metric) -> bool:
                         'TargetSpotCapacity': cluster.scaling_policy_max_units - cluster.scaling_policy_max_core_units
                     }
                 )
+    # max units不能少于max core units
+    new_max_capacity_units = max(cluster.scaling_policy_max_core_units, new_max_capacity_units)
+    # max od units不能超过max units
+    new_max_od_units = min(new_max_capacity_units, new_max_od_units)
     cluster.modify_scaling_policy(max_units=new_max_capacity_units, max_od_units=new_max_od_units)
     # 应用新策略
     emr_client.put_managed_scaling_policy(ClusterId=cluster.id, ManagedScalingPolicy=cluster.managed_scaling_policy)

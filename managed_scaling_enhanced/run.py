@@ -79,8 +79,8 @@ def run():
     run_id = int(time.time())
     session = Session()
     clusters = session.query(Cluster).all()
+    logger.info(f'Updating cluster status...')
     for cluster in clusters:
-        logger.info(f'Updating cluster {cluster.id} status...')
         update_cluster_status(cluster_id=cluster.id, session=session)
         session.add(Event(run_id=run_id, action='GetCluster', cluster_id=cluster.id,
                           event_time=datetime.utcnow(), data=cluster.to_dict()))
@@ -89,6 +89,7 @@ def run():
                        if cluster.cluster_info and cluster.cluster_info['Status']['State'] in ('RUNNING', 'WAITING')]
     session.close()
     for cluster_id in active_clusters:
+        logger.info(f'Start processing cluster {cluster_id} in run {run_id}...')
         try:
             with Session() as session:
                 do_run(run_id=run_id, cluster_id=cluster_id, session=session)

@@ -27,12 +27,10 @@ class Cluster(Base):
         return Config(**self.configuration)
 
     def modify_scaling_policy(self, max_units=None, max_od_units=None):
-        policy = self.managed_scaling_policy
         if max_units:
-            policy['MaximumCapacityUnits'] = max_units
+            self.managed_scaling_policy['ComputeLimits']['MaximumCapacityUnits'] = max_units
         if max_od_units:
-            policy['MaximumOnDemandCapacityUnits'] = max_od_units
-        self.managed_scaling_policy = policy
+            self.managed_scaling_policy['ComputeLimits']['MaximumOnDemandCapacityUnits'] = max_od_units
 
     @property
     def scaling_policy_max_units(self):
