@@ -78,10 +78,10 @@ def get_avg_yarn_metric(cluster_id, metric_name, minutes):
 def get_avg_task_cpu_load(cluster_id, minutes):
     nodes = emr_client.list_instances(
         ClusterId=cluster_id,
-        InstanceGroupTypes=['TASK'],
+        InstanceGroupTypes=['TASK', 'CORE'],
         InstanceStates=['RUNNING']
     )
-    logger.info(f'There are {len(nodes)} task nodes running in cluster {cluster_id}.')
+    logger.info(f'There are {len(nodes)} task/core nodes running in cluster {cluster_id}.')
     nodes = [node['Ec2InstanceId'] for node in nodes['Instances']]
     metrics = []
     dimensions = []

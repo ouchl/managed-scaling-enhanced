@@ -7,7 +7,8 @@ import time
 from managed_scaling_enhanced.scale import get_scale_in_flags, get_scale_out_flags, scale_out, scale_in
 from managed_scaling_enhanced.models import Cluster, Event
 import logging
-import orjson
+from dataclasses import fields
+
 
 logger = logging.getLogger(__name__)
 emr_client = boto3.client('emr')
@@ -20,7 +21,7 @@ def update_cluster_status(cluster_id: str, session=Session()):
     except ClientError as e:
         code = e.response['Error']['Code']
         if code == 'InvalidRequestException':
-            logging.warning(f'Cluster {cluster_id} is not valid.')
+            logging.exception(f'Cluster {cluster_id} is not valid.')
             return
         else:
             raise e
@@ -42,6 +43,11 @@ def do_run(run_id: int, cluster_id: str, session):
                       event_time=datetime.utcnow(), data=cluster_metrics
                       ))
     session.commit()
+    # 检查metric是否为空
+    for field in fields(metrics.Metric):
+        if getattr(cluster_metrics, field.name) is None:
+            logger.warning(f'Metric {field.name} of cluster {cluster_id} is null. Skip it in this run {run_id}.')
+            return
     scale_out_flags = get_scale_out_flags(cluster, cluster_metrics)
     session.add(Event(run_id=run_id, action='GetScaleOutFlags', cluster_id=cluster.id,
                       event_time=datetime.utcnow(), data=scale_out_flags
@@ -87,7 +93,7 @@ def run():
             with Session() as session:
                 do_run(run_id=run_id, cluster_id=cluster_id, session=session)
         except Exception as e:
-            logger.error(f'Cluster {cluster_id} error: {e}')
+            logger.exception(f'Cluster {cluster_id} error: {e}')
 
 
 if __name__ == '__main__':

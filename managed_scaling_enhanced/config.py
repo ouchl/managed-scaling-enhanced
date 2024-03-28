@@ -9,6 +9,7 @@ class Config:
     maximumOnDemandUnits: Decimal = 160
     spotSwitchOnDemand: bool = False
     spotSwitchOnDemandFactor: Decimal = 0.5
+
     # maximumOnDemandInstancesNumValue: Decimal = 160
     spotInstancesTimeout: Decimal = 60*30
     scaleOutAvgYARNMemoryAvailablePercentageValue: Decimal = 30
@@ -17,6 +18,7 @@ class Config:
     scaleOutAvgCapacityRemainingGBMinutes: Decimal = 5
     scaleOutAvgPendingAppNumValue: Decimal = 3
     scaleOutAvgPendingAppNumMinutes: Decimal = 5
+    scaleOutAvgTaskNodeCPULoad: bool = False
     scaleOutAvgTaskNodeCPULoadValue: Decimal = 42
     scaleOutAvgTaskNodeCPULoadMinutes: Decimal = 15
 

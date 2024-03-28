@@ -30,11 +30,11 @@ def get_scale_out_flags(cluster: Cluster, metrics: Metric):
     yarn_mem_percentage_flag = metrics.ScaleOutAvgYARNMemoryAvailablePercentage <= config.scaleOutAvgYARNMemoryAvailablePercentageValue
     free_mem_flag = metrics.ScaleOutAvgCapacityRemainingGB <= config.scaleOutAvgCapacityRemainingGBValue
     apps_pending_flag = metrics.ScaleOutAvgPendingAppNum >= config.scaleOutAvgPendingAppNumValue
-    # in case there is no task node
-    if metrics.ScaleOutAvgTaskNodeCPULoad is None:
-        cpu_load_flag = False
-    else:
+    # 判断CPU负载是否参与计算
+    if config.scaleOutAvgTaskNodeCPULoad:
         cpu_load_flag = metrics.ScaleOutAvgTaskNodeCPULoad >= config.scaleOutAvgTaskNodeCPULoadValue
+    else:
+        cpu_load_flag = True
     max_unit_flag = cluster.scaling_policy_max_units < config.maximumUnits
     overall_flag = ((yarn_mem_percentage_flag or free_mem_flag or apps_pending_flag)
                     and cpu_load_flag and max_unit_flag)
@@ -54,11 +54,7 @@ def get_scale_in_flags(cluster: Cluster, metrics: Metric):
     yarn_mem_percentage_flag = metrics.ScaleInAvgYARNMemoryAvailablePercentage > config.scaleInAvgYARNMemoryAvailablePercentageValue
     free_mem_flag = metrics.ScaleInAvgCapacityRemainingGB > config.scaleInAvgCapacityRemainingGBValue
     apps_pending_flag = metrics.ScaleInAvgPendingAppNum < config.scaleInAvgPendingAppNumValue
-    # in case there is no task node
-    if metrics.ScaleOutAvgTaskNodeCPULoad is None:
-        cpu_load_flag = False
-    else:
-        cpu_load_flag = metrics.ScaleOutAvgTaskNodeCPULoad < config.scaleOutAvgTaskNodeCPULoadValue
+    cpu_load_flag = metrics.ScaleInAvgTaskNodeCPULoad < config.scaleInAvgTaskNodeCPULoadValue
     max_unit_flag = cluster.scaling_policy_max_units > config.minimumUnits
     overall_flag = ((yarn_mem_percentage_flag or free_mem_flag or apps_pending_flag or cpu_load_flag)
                     and max_unit_flag)
@@ -196,7 +192,7 @@ def scale_in(cluster: Cluster, metrics: Metric) -> bool:
 
 
 if __name__ == '__main__':
-    logger.setLevel('INFO')
+    pass
     # from managed_scaling_enhanced.metrics import get_metrics
     # session = Session()
     # cluster = session.get(Cluster, 'j-1SJOW088JSHLK')
