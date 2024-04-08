@@ -27,5 +27,4 @@ Start the scheduler
 ```
 mse start --schedule-interval 60
 ```
-
-
+You can find the log in the log directory.
