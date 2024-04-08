@@ -13,7 +13,7 @@ def cli():
 
 
 @click.command()
-@click.option('--cluster-id', help='EMR cluster ID')
+@click.option('--cluster-id', required=True, help='EMR cluster ID')
 @click.option('--cluster-name', default=None, help='EMR cluster name')
 @click.option('--cluster-group', default=None, help='EMR cluster group')
 @click.option('--cpu-usage-upper-bound', default=0.8)
