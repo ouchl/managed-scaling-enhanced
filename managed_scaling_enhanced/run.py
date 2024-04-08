@@ -64,7 +64,7 @@ def get_task_cpu_usage(cluster: Cluster, ec2_type_cpu_map):
     return total_used_resource, total_cpu_count
 
 
-def modify_target_spot(cluster: Cluster, target_spot):
+def modify_target_spot(cluster: Cluster, target_spot, dry_run):
     instance_fleets = emr_client.list_instance_fleets(ClusterId=cluster.id)['InstanceFleets']
     for fleet in instance_fleets:
         if fleet['InstanceFleetType'] == 'TASK':
@@ -74,19 +74,21 @@ def modify_target_spot(cluster: Cluster, target_spot):
                 logging.info(f'Skipping modifying target spot because current spot capacity is {current_spot} '
                              f'not higher than target spot capacity {target_spot}.')
             else:
-                emr_client.modify_instance_fleet(
-                    ClusterId=cluster.id,
-                    InstanceFleet={
-                        'InstanceFleetId': fleet['Id'],
-                        'TargetOnDemandCapacity': 0,
-                        'TargetSpotCapacity': target_spot
-                    }
-                )
+                if not dry_run:
+                    emr_client.modify_instance_fleet(
+                        ClusterId=cluster.id,
+                        InstanceFleet={
+                            'InstanceFleetId': fleet['Id'],
+                            'TargetOnDemandCapacity': 0,
+                            'TargetSpotCapacity': target_spot
+                        }
+                    )
+                else:
+                    logger.info(f'Target spot capacity is not modified because dry run mode is enabled')
                 logger.info(f'Modified target spot capacity to {target_spot}.')
 
 
-def do_run(cluster_id, session):
-    cluster = session.get(Cluster, cluster_id)
+def do_run(cluster, dry_run):
     current_time = datetime.utcnow()
     last_scale_in_ts = cluster.last_scale_in_ts or datetime.min
     logger.info(f'Last scale in time: {last_scale_in_ts}')
@@ -106,11 +108,11 @@ def do_run(cluster_id, session):
     else:
         logger.info(f'CPU usage lower than threshold {cluster.cpu_usage_lower_bound}. Start scaling in.')
         target_spot = int(total_used_resource / cluster.cpu_usage_upper_bound)
-        modify_target_spot(cluster, target_spot)
+        modify_target_spot(cluster, target_spot, dry_run)
         cluster.last_scale_in_ts = datetime.utcnow()
 
 
-def run():
+def run(dry_run):
     logger.info('Getting ec2 types...')
     get_ec2_types()
     session = Session()
@@ -121,8 +123,10 @@ def run():
         logger.info(f'Start evaluating cluster {cluster_id}.')
         try:
             with Session() as session:
-                do_run(cluster_id, session)
-                session.commit()
+                cluster = session.get(Cluster, cluster_id)
+                do_run(cluster, dry_run)
+                if not dry_run:
+                    session.commit()
         except Exception as e:
             logger.exception(f'Cluster {cluster_id} error: {e}')
 

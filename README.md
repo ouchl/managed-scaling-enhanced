@@ -27,4 +27,8 @@ Start the scheduler
 ```
 mse start --schedule-interval 60
 ```
+Start the scheduler with dry run mode. This will only evaluate the cluster but not actually scale in.
+```
+mse start --schedule-interval 60 --dry-run
+```
 You can find the log in the log directory.

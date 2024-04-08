@@ -71,11 +71,13 @@ def describe_cluster(cluster_id):
 
 
 @click.command()
-@click.option('-s', '--schedule-interval', required=True, type=click.INT, help='Schedule interval seconds of background job')
-def start(schedule_interval):
+@click.option('-s', '--schedule-interval',
+              required=True, type=click.INT, help='Schedule interval seconds of background job')
+@click.option('--dry-run', is_flag=True, help='Dry run mode')
+def start(schedule_interval, dry_run):
     """Start background scheduled job."""
     scheduler = BackgroundScheduler()
-    scheduler.add_job(run, 'interval', seconds=schedule_interval)
+    scheduler.add_job(run, 'interval', args=[dry_run], seconds=schedule_interval)
     scheduler.start()
     try:
         # 主线程继续运行，直到按Ctrl+C或发生异常
