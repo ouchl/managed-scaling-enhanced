@@ -1,16 +1,10 @@
 import click
 
-from managed_scaling_enhanced import config
 from managed_scaling_enhanced.database import Session
 from managed_scaling_enhanced.models import Cluster
-import json
 from apscheduler.schedulers.background import BackgroundScheduler
 from managed_scaling_enhanced.run import run
 import time
-import logging
-
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 
 @click.group()
@@ -22,13 +16,18 @@ def cli():
 @click.option('--cluster-id', help='EMR cluster ID')
 @click.option('--cluster-name', default=None, help='EMR cluster name')
 @click.option('--cluster-group', default=None, help='EMR cluster group')
-@click.option('--configuration', default='{}', help='EMR cluster configuration')
-def add(cluster_id, cluster_name, cluster_group, configuration):
+@click.option('--cpu-usage-upper-bound', default=0.8)
+@click.option('--cpu-usage-lower-bound', default=0.4)
+@click.option('--cpu-usage-period-minutes', default=15)
+@click.option('--cool-down-period-minutes', default=5)
+def add(cluster_id, cluster_name, cluster_group, cpu_usage_upper_bound, cpu_usage_lower_bound,
+        cpu_usage_period_minutes, cool_down_period_minutes):
     """Add an EMR cluster to be managed by this tool."""
     session = Session()
-    config_obj = config.Config(**json.loads(configuration))
     cluster = Cluster(id=cluster_id, cluster_name=cluster_name,
-                      cluster_group=cluster_group, configuration=config_obj.__dict__)
+                      cluster_group=cluster_group, cpu_usage_upper_bound=cpu_usage_upper_bound,
+                      cpu_usage_lower_bound=cpu_usage_lower_bound, cpu_usage_period_minutes=cpu_usage_period_minutes,
+                      cool_down_period_minutes=cool_down_period_minutes)
     session.add(cluster)
     session.commit()
     session.close()
@@ -72,7 +71,7 @@ def describe_cluster(cluster_id):
 
 
 @click.command()
-@click.option('-s', '--schedule-interval', type=click.INT, help='Schedule interval seconds of background job')
+@click.option('-s', '--schedule-interval', required=True, type=click.INT, help='Schedule interval seconds of background job')
 def start(schedule_interval):
     """Start background scheduled job."""
     scheduler = BackgroundScheduler()

@@ -1,98 +1,128 @@
-from datetime import datetime
+import json
+from datetime import datetime, timedelta
 import boto3
-from botocore.exceptions import ClientError
-from managed_scaling_enhanced import metrics
 from managed_scaling_enhanced.database import Session
-import time
-from managed_scaling_enhanced.scale import get_scale_in_flags, get_scale_out_flags, scale_out, scale_in
-from managed_scaling_enhanced.models import Cluster, Event
+from managed_scaling_enhanced.models import Cluster
 import logging
-from dataclasses import fields
+from pathlib import Path
 
 
 logger = logging.getLogger(__name__)
 emr_client = boto3.client('emr')
+ec2_client = boto3.client('ec2')
+cw_client = boto3.client('cloudwatch')
 
 
-def update_cluster_status(cluster_id: str, session=Session()):
-    try:
-        cluster_info = emr_client.describe_cluster(ClusterId=cluster_id)['Cluster']
-        ms_policy = emr_client.get_managed_scaling_policy(ClusterId=cluster_id)['ManagedScalingPolicy']
-    except ClientError as e:
-        code = e.response['Error']['Code']
-        if code == 'InvalidRequestException':
-            logging.exception(f'Cluster {cluster_id} is not valid.')
-            return
-        else:
-            raise e
-    cluster: Cluster = session.get(Cluster, cluster_id)
-    if not cluster:
-        logger.warning(f'Cluster {cluster_id} does not exist in database.')
-        return
-    cluster.cluster_name = cluster_info['Name']
-    cluster.cluster_info = cluster_info
-    cluster.managed_scaling_policy = ms_policy
-    session.commit()
-
-
-def do_run(run_id: int, cluster_id: str, session):
-    cluster: Cluster = session.get(Cluster, cluster_id)
-    logger.info(f'Getting cluster {cluster.id} metrics...')
-    cluster_metrics = metrics.get_metrics(cluster)
-    session.add(Event(run_id=run_id, action='GetMetrics', cluster_id=cluster.id,
-                      event_time=datetime.utcnow(), data=cluster_metrics
-                      ))
-    session.commit()
-    # 检查metric是否为空
-    for field in fields(metrics.Metric):
-        if getattr(cluster_metrics, field.name) is None:
-            logger.warning(f'Metric {field.name} of cluster {cluster_id} is null. Skip it in this run {run_id}.')
-            return
-    scale_out_flags = get_scale_out_flags(cluster, cluster_metrics)
-    session.add(Event(run_id=run_id, action='GetScaleOutFlags', cluster_id=cluster.id,
-                      event_time=datetime.utcnow(), data=scale_out_flags
-                      ))
-    scale_in_flags = get_scale_in_flags(cluster, cluster_metrics)
-    session.add(Event(run_id=run_id, action='GetScaleInFlags', cluster_id=cluster.id,
-                      event_time=datetime.utcnow(), data=scale_in_flags
-                      ))
-    session.commit()
-
-    if scale_out_flags.OverallFlag:
-        scaled_out = scale_out(cluster=cluster, metrics=cluster_metrics)
-        if scaled_out:
-            logger.info(f'Cluster {cluster.id} scaled out successfully.')
-            session.add(Event(run_id=run_id, action='ScaleOut', cluster_id=cluster.id,
-                              event_time=datetime.utcnow(), data=cluster.managed_scaling_policy))
-    elif scale_in_flags.OverallFlag:
-        scaled_in = scale_in(cluster=cluster, metrics=cluster_metrics)
-        if scaled_in:
-            logger.info(f'Cluster {cluster.id} scaled in successfully.')
-            session.add(Event(run_id=run_id, action='ScaleIn', cluster_id=cluster.id,
-                              event_time=datetime.utcnow(), data=cluster.managed_scaling_policy))
+def get_ec2_types():
+    cache_path = Path('ec2_types.json')
+    if cache_path.exists():
+        with open(cache_path, 'r') as f:
+            ec2_type_cpu_map = json.load(f)
     else:
-        logger.info(f'Cluster {cluster.id} is good. Do nothing in this run.')
-    session.commit()
+        ec2_type_cpu_map = {}
+        paginator = ec2_client.get_paginator('describe_instance_types')
+        page_iterator = paginator.paginate()
+
+        for page in page_iterator:
+            for instance_type in page['InstanceTypes']:
+                ec2_type_cpu_map[instance_type['InstanceType']] = instance_type['VCpuInfo']['DefaultVCpus']
+        with open(cache_path, 'w') as f:
+            json.dump(ec2_type_cpu_map, f)
+    return ec2_type_cpu_map
+
+
+def get_task_cpu_usage(cluster: Cluster, ec2_type_cpu_map):
+    total_used_resource = 0
+    total_cpu_count = 0
+    nodes = emr_client.list_instances(
+        ClusterId=cluster.id,
+        InstanceGroupTypes=['TASK'],
+        InstanceStates=['RUNNING']
+    )
+    node_count = len(nodes['Instances'])
+    if node_count == 0:
+        logger.info(f'Skipping cluster {cluster.id} because no task instances were found.')
+        return total_used_resource, total_cpu_count
+    logger.info(f'There are {node_count} task nodes running in cluster {cluster.id}.')
+    for node in nodes['Instances']:
+        instance_id = node['Ec2InstanceId']
+        response = cw_client.get_metric_statistics(
+            Namespace='AWS/EC2',
+            MetricName='CPUUtilization',
+            Dimensions=[{'Name': 'InstanceId', 'Value': instance_id}],
+            StartTime=datetime.utcnow() - timedelta(minutes=cluster.cpu_usage_period_minutes),
+            EndTime=datetime.utcnow(),
+            Period=int(cluster.cpu_usage_period_minutes*60+300),
+            Statistics=['Average'],
+        )
+        if len(response['Datapoints']) == 0:
+            logger.info(f'Skipping instance {instance_id} because cloud watch metrics were not found.')
+            continue
+        cpu_count = ec2_type_cpu_map[node['InstanceType']]
+        total_used_resource += response['Datapoints'][0]['Average']/100 * cpu_count
+        total_cpu_count += cpu_count
+    return total_used_resource, total_cpu_count
+
+
+def modify_target_spot(cluster: Cluster, target_spot):
+    instance_fleets = emr_client.list_instance_fleets(ClusterId=cluster.id)['InstanceFleets']
+    for fleet in instance_fleets:
+        if fleet['InstanceFleetType'] == 'TASK':
+            current_spot = fleet['TargetSpotCapacity']
+            logger.info(f'Current target spot capacity: {current_spot}. New target spot capacity: {target_spot}')
+            if current_spot <= target_spot:
+                logging.info(f'Skipping modifying target spot because current spot capacity is {current_spot} '
+                             f'not higher than target spot capacity {target_spot}.')
+            else:
+                emr_client.modify_instance_fleet(
+                    ClusterId=cluster.id,
+                    InstanceFleet={
+                        'InstanceFleetId': fleet['Id'],
+                        'TargetOnDemandCapacity': 0,
+                        'TargetSpotCapacity': target_spot
+                    }
+                )
+                logger.info(f'Modified target spot capacity to {target_spot}.')
+
+
+def do_run(cluster_id, session):
+    cluster = session.get(Cluster, cluster_id)
+    current_time = datetime.utcnow()
+    last_scale_in_ts = cluster.last_scale_in_ts or datetime.min
+    logger.info(f'Last scale in time: {last_scale_in_ts}')
+    if (current_time - last_scale_in_ts).total_seconds() < cluster.cool_down_period_minutes*60:
+        logger.info(f"Skipping scale in due to cooldown period ({cluster.cool_down_period_minutes} minutes).")
+        return
+    ec2_type_cpu_map = get_ec2_types()
+    total_used_resource, total_cpu_count = get_task_cpu_usage(cluster, ec2_type_cpu_map)
+    if total_used_resource == 0:
+        return
+    avg_cpu_usage = total_used_resource/total_cpu_count
+    logger.info(f'Total used resource: {total_used_resource}. '
+                f'Total CPU count: {total_cpu_count}. '
+                f'Average CPU usage: {avg_cpu_usage}')
+    if avg_cpu_usage >= cluster.cpu_usage_lower_bound:
+        logger.info(f'CPU usage higher than threshold {cluster.cpu_usage_lower_bound}. Do not scale in.')
+    else:
+        logger.info(f'CPU usage lower than threshold {cluster.cpu_usage_lower_bound}. Start scaling in.')
+        target_spot = int(total_used_resource / cluster.cpu_usage_upper_bound)
+        modify_target_spot(cluster, target_spot)
+        cluster.last_scale_in_ts = datetime.utcnow()
 
 
 def run():
-    run_id = int(time.time())
+    logger.info('Getting ec2 types...')
+    get_ec2_types()
     session = Session()
     clusters = session.query(Cluster).all()
-    logger.info(f'Updating cluster status...')
-    for cluster in clusters:
-        update_cluster_status(cluster_id=cluster.id, session=session)
-        session.add(Event(run_id=run_id, action='GetCluster', cluster_id=cluster.id,
-                          event_time=datetime.utcnow(), data=cluster.to_dict()))
-    session.commit()
-    active_clusters = [cluster.id for cluster in clusters
-                       if cluster.cluster_info and cluster.cluster_info['Status']['State'] in ('RUNNING', 'WAITING')]
+    cluster_ids = [cluster.id for cluster in clusters]
     session.close()
-    for cluster_id in active_clusters:
-        logger.info(f'Start processing cluster {cluster_id} in run {run_id}...')
+    for cluster_id in cluster_ids:
+        logger.info(f'Start evaluating cluster {cluster_id}.')
         try:
             with Session() as session:
-                do_run(run_id=run_id, cluster_id=cluster_id, session=session)
+                do_run(cluster_id, session)
+                session.commit()
         except Exception as e:
             logger.exception(f'Cluster {cluster_id} error: {e}')
 

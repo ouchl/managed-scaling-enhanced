@@ -1,10 +1,6 @@
-import json
+from sqlalchemy import Column, String, JSON, DateTime, Integer, Float
 
-from sqlalchemy import Column, String, JSON, DateTime, Integer
-
-from managed_scaling_enhanced.config import Config
 from managed_scaling_enhanced.database import Base, engine
-import orjson
 
 
 class Cluster(Base):
@@ -13,43 +9,14 @@ class Cluster(Base):
     id = Column(String, primary_key=True)
     cluster_name = Column(String)
     cluster_group = Column(String)
-    configuration = Column(JSON)
-    last_scale_out_ts = Column(DateTime)
+    cpu_usage_upper_bound = Column(Float, default=0.8)
+    cpu_usage_lower_bound = Column(Float, default=0.4)
+    cpu_usage_period_minutes = Column(Float, default=15)
+    cool_down_period_minutes = Column(Float, default=5)
     last_scale_in_ts = Column(DateTime)
-    managed_scaling_policy = Column(JSON)
-    cluster_info = Column(JSON)
 
     def to_dict(self):
         return {c.name: getattr(self, c.name) for c in self.__table__.columns}
-
-    @property
-    def config_obj(self):
-        return Config(**self.configuration)
-
-    def modify_scaling_policy(self, max_units=None, max_od_units=None):
-        if max_units:
-            self.managed_scaling_policy['ComputeLimits']['MaximumCapacityUnits'] = max_units
-        if max_od_units:
-            self.managed_scaling_policy['ComputeLimits']['MaximumOnDemandCapacityUnits'] = max_od_units
-
-    @property
-    def scaling_policy_max_units(self):
-        return self.managed_scaling_policy['ComputeLimits']['MaximumCapacityUnits']
-
-    @property
-    def scaling_policy_min_units(self):
-        return self.managed_scaling_policy['ComputeLimits']['MaximumCapacityUnits']
-
-    @property
-    def scaling_policy_max_od_units(self):
-        return self.managed_scaling_policy['ComputeLimits']['MaximumOnDemandCapacityUnits']
-
-    @property
-    def scaling_policy_max_core_units(self):
-        return self.managed_scaling_policy['ComputeLimits']['MaximumCoreCapacityUnits']
-
-    def __repr__(self):
-        return orjson.dumps(self.to_dict()).decode("utf-8")
 
 
 class Event(Base):

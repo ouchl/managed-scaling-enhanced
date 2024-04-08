@@ -7,13 +7,11 @@ setup(
     packages=find_packages(),
     include_package_data=True,
     install_requires=[
-        'boto3==1.34.14',
-        'loguru==0.7.2',
-        'requests>=2.25.1',
-        'sqlalchemy==2.0.25',
+        'boto3',
+        'requests',
+        'sqlalchemy',
         'apscheduler==3.10.4',
-        'click==8.1.7',
-        'orjson==3.9.13'
+        'click==8.1.7'
     ],
     entry_points={
         'console_scripts': [
