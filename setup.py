@@ -10,8 +10,9 @@ setup(
         'boto3',
         'requests',
         'sqlalchemy',
-        'apscheduler==3.10.4',
-        'click==8.1.7'
+        'apscheduler',
+        'click',
+        'orjson'
     ],
     entry_points={
         'console_scripts': [

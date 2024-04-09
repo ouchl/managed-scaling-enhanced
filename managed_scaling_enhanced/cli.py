@@ -16,7 +16,7 @@ def cli():
 @click.option('--cluster-id', required=True, help='EMR cluster ID')
 @click.option('--cluster-name', default=None, help='EMR cluster name')
 @click.option('--cluster-group', default=None, help='EMR cluster group')
-@click.option('--cpu-usage-upper-bound', default=0.8)
+@click.option('--cpu-usage-upper-bound', default=0.6)
 @click.option('--cpu-usage-lower-bound', default=0.4)
 @click.option('--cpu-usage-period-minutes', default=15)
 @click.option('--cool-down-period-minutes', default=5)

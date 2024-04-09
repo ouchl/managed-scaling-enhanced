@@ -5,6 +5,9 @@ from managed_scaling_enhanced.database import Session
 from managed_scaling_enhanced.models import Cluster
 import logging
 from pathlib import Path
+import pprint
+import requests
+from managed_scaling_enhanced.scale import scale_in
 
 
 logger = logging.getLogger(__name__)
@@ -31,21 +34,46 @@ def get_ec2_types():
     return ec2_type_cpu_map
 
 
-def get_task_cpu_usage(cluster: Cluster, ec2_type_cpu_map):
+def get_current_yarn_metric(dns_name, metric_name):
+    response = requests.get(f"http://{dns_name}:8088/ws/v1/cluster/metrics", timeout=5)
+    response.raise_for_status()
+    metrics = response.json().get('clusterMetrics', {})
+    return metrics.get(metric_name, 0)
+
+
+def get_instances(cluster: Cluster, fleet_type):
+    instances = []
+    paginator = emr_client.get_paginator('list_instances')
+    response_iterator = paginator.paginate(
+        ClusterId=cluster.id,
+        InstanceFleetType=fleet_type,
+        InstanceStates=['RUNNING'],
+        PaginationConfig={
+            'MaxItems': 100
+        }
+    )
+    for page in response_iterator:
+        for instance in page['Instances']:
+            instances.append(instance)
+    return instances
+
+
+def update_cpu_usage(cluster: Cluster, ec2_type_cpu_map):
+    master_instances = get_instances(cluster, 'MASTER')
+    core_instances = get_instances(cluster, 'CORE')
+    task_instances = get_instances(cluster, 'TASK')
+    task_instance_ids = set(map(lambda x: x['Ec2InstanceId'], task_instances))
     total_used_resource = 0
     total_cpu_count = 0
-    nodes = emr_client.list_instances(
-        ClusterId=cluster.id,
-        InstanceGroupTypes=['TASK'],
-        InstanceStates=['RUNNING']
-    )
-    node_count = len(nodes['Instances'])
-    if node_count == 0:
-        logger.info(f'Skipping cluster {cluster.id} because no task instances were found.')
-        return total_used_resource, total_cpu_count
-    logger.info(f'There are {node_count} task nodes running in cluster {cluster.id}.')
-    for node in nodes['Instances']:
-        instance_id = node['Ec2InstanceId']
+    task_used_resource = 0
+    task_cpu_count = 0
+    all_instances = master_instances + core_instances + task_instances
+    logger.info(f'There are {len(all_instances)} instances running in cluster {cluster.id}.')
+    logger.info(f'There are {len(task_instances)} task instances running in cluster {cluster.id}.')
+
+    for instance in all_instances:
+        instance_id = instance['Ec2InstanceId']
+        instance_type = instance['InstanceType']
         response = cw_client.get_metric_statistics(
             Namespace='AWS/EC2',
             MetricName='CPUUtilization',
@@ -58,63 +86,69 @@ def get_task_cpu_usage(cluster: Cluster, ec2_type_cpu_map):
         if len(response['Datapoints']) == 0:
             logger.info(f'Skipping instance {instance_id} because cloud watch metrics were not found.')
             continue
-        cpu_count = ec2_type_cpu_map[node['InstanceType']]
+        cpu_count = ec2_type_cpu_map[instance_type]
         total_used_resource += response['Datapoints'][0]['Average']/100 * cpu_count
         total_cpu_count += cpu_count
-    return total_used_resource, total_cpu_count
+        if instance_id in task_instance_ids:
+            task_used_resource += response['Datapoints'][0]['Average'] / 100 * cpu_count
+            task_cpu_count += cpu_count
+    cluster.total_used_resource = total_used_resource
+    cluster.total_cpu_count = total_cpu_count
+    cluster.task_used_resource = task_used_resource
+    cluster.task_cpu_count = task_cpu_count
 
 
-def modify_target_spot(cluster: Cluster, target_spot, dry_run):
-    instance_fleets = emr_client.list_instance_fleets(ClusterId=cluster.id)['InstanceFleets']
-    for fleet in instance_fleets:
-        if fleet['InstanceFleetType'] == 'TASK':
-            current_spot = fleet['TargetSpotCapacity']
-            logger.info(f'Current target spot capacity: {current_spot}. New target spot capacity: {target_spot}')
-            if current_spot <= target_spot:
-                logging.info(f'Skipping modifying target spot because current spot capacity is {current_spot} '
-                             f'not higher than target spot capacity {target_spot}.')
-            else:
-                if not dry_run:
-                    emr_client.modify_instance_fleet(
-                        ClusterId=cluster.id,
-                        InstanceFleet={
-                            'InstanceFleetId': fleet['Id'],
-                            'TargetOnDemandCapacity': 0,
-                            'TargetSpotCapacity': target_spot
-                        }
-                    )
-                else:
-                    logger.info(f'Target spot capacity is not modified because dry run mode is enabled')
-                logger.info(f'Modified target spot capacity to {target_spot}.')
-
-
+#
+# def modify_target_capacity(cluster: Cluster, target_capacity, dry_run):
+#     instance_fleets = emr_client.list_instance_fleets(ClusterId=cluster.id)['InstanceFleets']
+#     total_target_capacity = 0
+#     for fleet in instance_fleets:
+#         if fleet['InstanceFleetType'] != 'TASK':
+#             total_target_capacity += fleet['TargetSpotCapacity']
+#             total_target_capacity += fleet['TargetOnDemandCapacity']
+#         else:
+#             current_spot = fleet['TargetSpotCapacity']
+#             logger.info(f'Current target spot capacity: {current_spot}. New target spot capacity: {target_spot}')
+#             if current_spot <= target_spot:
+#                 logging.info(f'Skipping modifying target spot because current spot capacity is {current_spot} '
+#                              f'not higher than target spot capacity {target_spot}.')
+#             else:
+#                 if not dry_run:
+#                     emr_client.modify_instance_fleet(
+#                         ClusterId=cluster.id,
+#                         InstanceFleet={
+#                             'InstanceFleetId': fleet['Id'],
+#                             'TargetOnDemandCapacity': 0,
+#                             'TargetSpotCapacity': target_spot
+#                         }
+#                     )
+#                     logger.info(f'Modified target spot capacity to {target_spot}.')
+#                 else:
+#                     logger.info(f'Target spot capacity is not modified because dry run mode is enabled')
+#
+#
 def do_run(cluster, dry_run):
-    current_time = datetime.utcnow()
-    last_scale_in_ts = cluster.last_scale_in_ts or datetime.min
-    logger.info(f'Last scale in time: {last_scale_in_ts}')
-    if (current_time - last_scale_in_ts).total_seconds() < cluster.cool_down_period_minutes*60:
-        logger.info(f"Skipping scale in due to cooldown period ({cluster.cool_down_period_minutes} minutes).")
+    response = emr_client.describe_cluster(ClusterId=cluster.id)
+    if response['Cluster']['Status']['State'] not in ('RUNNING', 'WAITING'):
+        logger.info(f'Skipping cluster {cluster.id} because it is not running.')
         return
-    ec2_type_cpu_map = get_ec2_types()
-    total_used_resource, total_cpu_count = get_task_cpu_usage(cluster, ec2_type_cpu_map)
-    if total_used_resource == 0:
-        return
-    avg_cpu_usage = total_used_resource/total_cpu_count
-    logger.info(f'Total used resource: {total_used_resource}. '
-                f'Total CPU count: {total_cpu_count}. '
-                f'Average CPU usage: {avg_cpu_usage}')
-    if avg_cpu_usage >= cluster.cpu_usage_lower_bound:
-        logger.info(f'CPU usage higher than threshold {cluster.cpu_usage_lower_bound}. Do not scale in.')
-    else:
-        logger.info(f'CPU usage lower than threshold {cluster.cpu_usage_lower_bound}. Start scaling in.')
-        target_spot = int(total_used_resource / cluster.cpu_usage_upper_bound)
-        modify_target_spot(cluster, target_spot, dry_run)
-        cluster.last_scale_in_ts = datetime.utcnow()
+    cluster.cluster_name = response['Cluster']['Name']
+    master_public_dns = response['Cluster']['MasterPublicDnsName']
+    cluster.yarn_apps_pending = get_current_yarn_metric(master_public_dns, 'appsPending')
+    cluster.yarn_apps_running = get_current_yarn_metric(master_public_dns, 'appsRunning')
+    cluster.yarn_total_virtual_cores = get_current_yarn_metric(master_public_dns, 'totalVirtualCores')
+    cluster.yarn_reserved_virtual_cores = get_current_yarn_metric(master_public_dns, 'reservedVirtualCores')
+    cluster.yarn_total_memory_mb = get_current_yarn_metric(master_public_dns, 'totalMB')
+    cluster.yarn_available_memory_mb = get_current_yarn_metric(master_public_dns, 'availableMB')
+    cluster.yarn_containers_pending = get_current_yarn_metric(master_public_dns, 'containersPending')
+    cluster.managed_scaling_policy = emr_client.get_managed_scaling_policy(ClusterId=cluster.id)['ManagedScalingPolicy']
+    cluster.instance_fleets = emr_client.list_instance_fleets(ClusterId=cluster.id)['InstanceFleets']
+    update_cpu_usage(cluster, get_ec2_types())
+    logger.info(f'Cluster {cluster.id} information: \n{pprint.pformat(cluster.to_dict())}')
+    scale_in(cluster, dry_run)
 
 
 def run(dry_run):
-    logger.info('Getting ec2 types...')
-    get_ec2_types()
     session = Session()
     clusters = session.query(Cluster).all()
     cluster_ids = [cluster.id for cluster in clusters]
@@ -132,4 +166,4 @@ def run(dry_run):
 
 
 if __name__ == '__main__':
-    run()
+    run(dry_run=True)
