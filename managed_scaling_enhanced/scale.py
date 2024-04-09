@@ -25,8 +25,6 @@ def scale_in(cluster: Cluster, dry_run: bool = False) -> bool:
         logger.info(f'Averaging task CPU usage for cluster {cluster.id} is {cluster.avg_task_cpu_usage}')
         logger.info(f'Task cpu usage lower bound is {cluster.cpu_usage_lower_bound}')
         logger.info(f'Starting cluster {cluster.id} scaling in...')
-        # Minimum task capacity. Since we cannot scale in master and core.
-        max_core_cpu_count = cluster.total_cpu_count - cluster.task_cpu_count
         # the minimum task capacity
         min_task_capacity = cluster.managed_scaling_policy_min_units - cluster.managed_scaling_policy_max_core_units
         target_capacity = int(cluster.total_used_resource / cluster.cpu_usage_upper_bound)
