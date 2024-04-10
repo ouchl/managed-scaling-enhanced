@@ -5,6 +5,10 @@ from managed_scaling_enhanced.models import Cluster
 from apscheduler.schedulers.background import BackgroundScheduler
 from managed_scaling_enhanced.run import run
 import time
+import boto3
+
+
+emr_client = boto3.client('emr')
 
 
 @click.group()
@@ -28,6 +32,7 @@ def add(cluster_id, cluster_name, cluster_group, cpu_usage_upper_bound, cpu_usag
                       cluster_group=cluster_group, cpu_usage_upper_bound=cpu_usage_upper_bound,
                       cpu_usage_lower_bound=cpu_usage_lower_bound, cpu_usage_period_minutes=cpu_usage_period_minutes,
                       cool_down_period_minutes=cool_down_period_minutes)
+    cluster.initial_managed_scaling_policy = emr_client.get_managed_scaling_policy(ClusterId=cluster.id)['ManagedScalingPolicy']
     session.add(cluster)
     session.commit()
     session.close()

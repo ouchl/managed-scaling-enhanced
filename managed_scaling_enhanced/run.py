@@ -1,13 +1,12 @@
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import boto3
 from managed_scaling_enhanced.database import Session
 from managed_scaling_enhanced.models import Cluster
 import logging
 from pathlib import Path
-import pprint
 import requests
-from managed_scaling_enhanced.scale import scale_in
+from managed_scaling_enhanced.scale import scale_in, scale_out
 
 
 logger = logging.getLogger(__name__)
@@ -71,6 +70,12 @@ def update_cpu_usage(cluster: Cluster, ec2_type_cpu_map):
     logger.info(f'There are {len(all_instances)} instances running in cluster {cluster.id}.')
     logger.info(f'There are {len(task_instances)} task instances running in cluster {cluster.id}.')
 
+    task_fleet_ready_time = datetime.min
+    for instance in task_instances:
+        instance_ready_time = instance['Status']['Timeline']['ReadyDateTime'].astimezone(timezone.utc).replace(tzinfo=None)
+        task_fleet_ready_time = max(task_fleet_ready_time, instance_ready_time)
+    cluster.task_fleet_latest_ready_time = task_fleet_ready_time
+
     for instance in all_instances:
         instance_id = instance['Ec2InstanceId']
         instance_type = instance['InstanceType']
@@ -98,35 +103,6 @@ def update_cpu_usage(cluster: Cluster, ec2_type_cpu_map):
     cluster.task_cpu_count = task_cpu_count
 
 
-#
-# def modify_target_capacity(cluster: Cluster, target_capacity, dry_run):
-#     instance_fleets = emr_client.list_instance_fleets(ClusterId=cluster.id)['InstanceFleets']
-#     total_target_capacity = 0
-#     for fleet in instance_fleets:
-#         if fleet['InstanceFleetType'] != 'TASK':
-#             total_target_capacity += fleet['TargetSpotCapacity']
-#             total_target_capacity += fleet['TargetOnDemandCapacity']
-#         else:
-#             current_spot = fleet['TargetSpotCapacity']
-#             logger.info(f'Current target spot capacity: {current_spot}. New target spot capacity: {target_spot}')
-#             if current_spot <= target_spot:
-#                 logging.info(f'Skipping modifying target spot because current spot capacity is {current_spot} '
-#                              f'not higher than target spot capacity {target_spot}.')
-#             else:
-#                 if not dry_run:
-#                     emr_client.modify_instance_fleet(
-#                         ClusterId=cluster.id,
-#                         InstanceFleet={
-#                             'InstanceFleetId': fleet['Id'],
-#                             'TargetOnDemandCapacity': 0,
-#                             'TargetSpotCapacity': target_spot
-#                         }
-#                     )
-#                     logger.info(f'Modified target spot capacity to {target_spot}.')
-#                 else:
-#                     logger.info(f'Target spot capacity is not modified because dry run mode is enabled')
-#
-#
 def do_run(cluster, dry_run):
     response = emr_client.describe_cluster(ClusterId=cluster.id)
     if response['Cluster']['Status']['State'] not in ('RUNNING', 'WAITING'):
@@ -141,11 +117,16 @@ def do_run(cluster, dry_run):
     cluster.yarn_total_memory_mb = get_current_yarn_metric(master_public_dns, 'totalMB')
     cluster.yarn_available_memory_mb = get_current_yarn_metric(master_public_dns, 'availableMB')
     cluster.yarn_containers_pending = get_current_yarn_metric(master_public_dns, 'containersPending')
-    cluster.managed_scaling_policy = emr_client.get_managed_scaling_policy(ClusterId=cluster.id)['ManagedScalingPolicy']
+    cluster.current_managed_scaling_policy = emr_client.get_managed_scaling_policy(ClusterId=cluster.id)['ManagedScalingPolicy']
     cluster.instance_fleets = emr_client.list_instance_fleets(ClusterId=cluster.id)['InstanceFleets']
     update_cpu_usage(cluster, get_ec2_types())
-    logger.info(f'Cluster {cluster.id} information: \n{pprint.pformat(cluster.to_dict())}')
-    scale_in(cluster, dry_run)
+    logger.info(f'Cluster {cluster.id} information: \n{cluster.get_info_str()}')
+    if scale_in(cluster, dry_run):
+        cluster.last_scale_in_ts = datetime.utcnow()
+        logger.info(f'Cluster {cluster.id} scaled in successfully.')
+    elif scale_out(cluster, dry_run):
+        cluster.last_scale_out_ts = datetime.utcnow()
+        logger.info(f'Cluster {cluster.id} scaled out successfully.')
 
 
 def run(dry_run):
