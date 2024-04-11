@@ -110,10 +110,6 @@ def scale_in(cluster: Cluster, dry_run: bool = False) -> bool:
     target_capacity = math.ceil((cluster.avg_total_cpu_usage / cluster.cpu_usage_upper_bound) * cluster.task_cpu_count)
     target_capacity = max(target_capacity, min_task_capacity)
     scale_in_step = cluster.task_target_od_capacity + cluster.task_target_spot_capacity - target_capacity
-    # logger.info(f'New target capacity is {target_capacity}')
-    # logger.info(f'Current target OD capacity is {cluster.task_target_od_capacity}.')
-    # logger.info(f'Current target spot capacity is {cluster.task_target_spot_capacity}.')
-    # logger.info(f'Capacity to be reduced is {scale_in_step}.')
     if scale_in_step <= 0:
         logger.info(f'Skipping cluster {cluster.id} scaling in due to capacity to be reduced is not positive.')
         return False
@@ -126,10 +122,7 @@ def scale_in(cluster: Cluster, dry_run: bool = False) -> bool:
         scale_in_step -= new_spot_capacity
         new_spot_capacity = 0
         new_od_capacity -= scale_in_step
-    # logger.info(
-    #     f'New target OD capacity is {new_od_capacity}. New target spot capacity is {new_spot_capacity}.')
     new_max_units = target_capacity + cluster.current_max_core_units + 1
-    # logger.info(f'Modifying managed scaling policy max units from {cluster.current_max_units} to {new_max_units}.')
     changes = [
         ParameterChange(parameter='MaximumCapacityUnits', before=cluster.current_max_units, after=str(new_max_units)),
         ParameterChange(parameter='TargetOnDemandCapacity', before=cluster.task_target_od_capacity,
@@ -138,8 +131,6 @@ def scale_in(cluster: Cluster, dry_run: bool = False) -> bool:
                         after=str(new_spot_capacity))]
     log_parameters(changes)
     cluster.modify_scaling_policy(max_units=new_max_units)
-    # logger.info(f'Modifying task fleet target OD capacity from {cluster.task_target_od_capacity} to {new_od_capacity}.')
-    # logger.info(f'Modifying task fleet target spot capacity from {cluster.task_target_spot_capacity} to {new_spot_capacity}.')
 
     if not dry_run:
         emr_client.put_managed_scaling_policy(ClusterId=cluster.id,
@@ -154,12 +145,6 @@ def scale_in(cluster: Cluster, dry_run: bool = False) -> bool:
 
 
 def scale_out(cluster: Cluster, dry_run):
-
-        # logger.info(f'Averaging total CPU usage for cluster {cluster.id} is {cluster.avg_total_cpu_usage}')
-        # logger.info(f'Task cpu usage upper bound is {cluster.cpu_usage_upper_bound}')
-        # logger.info(f'Starting cluster {cluster.id} scaling out...')
-        # logger.info(f'Initial managed policy max units: {cluster.initial_max_units}')
-        # logger.info(f'Current managed policy max units: {cluster.current_max_units}')
     new_max_units = min(cluster.initial_max_units, cluster.current_max_units * (cluster.avg_total_cpu_usage / cluster.cpu_usage_lower_bound))
     new_max_units = math.ceil(new_max_units)
     changes = [
