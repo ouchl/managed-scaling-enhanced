@@ -6,7 +6,7 @@ from managed_scaling_enhanced.models import Cluster
 import logging
 from pathlib import Path
 import requests
-from managed_scaling_enhanced.scale import scale_in, scale_out
+from managed_scaling_enhanced.scale import resize_cluster
 
 
 logger = logging.getLogger(__name__)
@@ -33,11 +33,10 @@ def get_ec2_types():
     return ec2_type_cpu_map
 
 
-def get_current_yarn_metric(dns_name, metric_name):
+def get_current_yarn_metrics(dns_name):
     response = requests.get(f"http://{dns_name}:8088/ws/v1/cluster/metrics", timeout=5)
     response.raise_for_status()
-    metrics = response.json().get('clusterMetrics', {})
-    return metrics.get(metric_name, 0)
+    return {k: v for k, v in response.json().get('clusterMetrics', {}).items() if not k.endswith('AcrossPartition')}
 
 
 def get_instances(cluster: Cluster, fleet_type):
@@ -110,23 +109,18 @@ def do_run(cluster, dry_run):
         return
     cluster.cluster_name = response['Cluster']['Name']
     master_public_dns = response['Cluster']['MasterPublicDnsName']
-    cluster.yarn_apps_pending = get_current_yarn_metric(master_public_dns, 'appsPending')
-    cluster.yarn_apps_running = get_current_yarn_metric(master_public_dns, 'appsRunning')
-    cluster.yarn_total_virtual_cores = get_current_yarn_metric(master_public_dns, 'totalVirtualCores')
-    cluster.yarn_reserved_virtual_cores = get_current_yarn_metric(master_public_dns, 'reservedVirtualCores')
-    cluster.yarn_total_memory_mb = get_current_yarn_metric(master_public_dns, 'totalMB')
-    cluster.yarn_available_memory_mb = get_current_yarn_metric(master_public_dns, 'availableMB')
-    cluster.yarn_containers_pending = get_current_yarn_metric(master_public_dns, 'containersPending')
+    cluster.yarn_metrics = get_current_yarn_metrics(master_public_dns)
     cluster.current_managed_scaling_policy = emr_client.get_managed_scaling_policy(ClusterId=cluster.id)['ManagedScalingPolicy']
     cluster.instance_fleets = emr_client.list_instance_fleets(ClusterId=cluster.id)['InstanceFleets']
     update_cpu_usage(cluster, get_ec2_types())
     logger.info(f'Cluster {cluster.id} information: \n{cluster.get_info_str()}')
-    if scale_in(cluster, dry_run):
-        cluster.last_scale_in_ts = datetime.utcnow()
-        logger.info(f'Cluster {cluster.id} scaled in successfully.')
-    elif scale_out(cluster, dry_run):
-        cluster.last_scale_out_ts = datetime.utcnow()
-        logger.info(f'Cluster {cluster.id} scaled out successfully.')
+    resize_cluster(cluster, dry_run)
+    # if scale_in(cluster, dry_run):
+    #     cluster.last_scale_in_ts = datetime.utcnow()
+    #     logger.info(f'Cluster {cluster.id} scaled in successfully.')
+    # elif scale_out(cluster, dry_run):
+    #     cluster.last_scale_out_ts = datetime.utcnow()
+    #     logger.info(f'Cluster {cluster.id} scaled out successfully.')
 
 
 def run(dry_run):
@@ -135,13 +129,14 @@ def run(dry_run):
     cluster_ids = [cluster.id for cluster in clusters]
     session.close()
     for cluster_id in cluster_ids:
-        logger.info(f'Start evaluating cluster {cluster_id}.')
         try:
             with Session() as session:
+                logger.info(f'\n####################################### Start {cluster_id} ##########################################')
                 cluster = session.get(Cluster, cluster_id)
                 do_run(cluster, dry_run)
                 if not dry_run:
                     session.commit()
+                logger.info(f'\n####################################### End {cluster_id} ##########################################\n\n\n')
         except Exception as e:
             logger.exception(f'Cluster {cluster_id} error: {e}')
 

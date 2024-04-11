@@ -12,7 +12,9 @@ setup(
         'sqlalchemy',
         'apscheduler',
         'click',
-        'orjson'
+        'orjson',
+        'tabulate',
+        'dataclasses'
     ],
     entry_points={
         'console_scripts': [

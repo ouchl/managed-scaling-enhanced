@@ -76,22 +76,25 @@ def describe_cluster(cluster_id):
 
 
 @click.command()
-@click.option('-s', '--schedule-interval',
-              required=True, type=click.INT, help='Schedule interval seconds of background job')
+@click.option('-s', '--schedule-interval', type=click.INT, help='Schedule interval seconds of background job')
 @click.option('--dry-run', is_flag=True, help='Dry run mode')
-def start(schedule_interval, dry_run):
+@click.option('--run-once', is_flag=True, help='Run only once')
+def start(schedule_interval, run_once, dry_run):
     """Start background scheduled job."""
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(run, 'interval', args=[dry_run], seconds=schedule_interval)
-    scheduler.start()
-    try:
-        # 主线程继续运行，直到按Ctrl+C或发生异常
-        while True:
-            time.sleep(1)
-    except (KeyboardInterrupt, SystemExit):
-        # 关闭调度器
-        scheduler.shutdown()
-        click.echo("Scheduler shutdown successfully.")
+    if run_once:
+        run(dry_run)
+    else:
+        scheduler = BackgroundScheduler()
+        scheduler.add_job(run, 'interval', args=[dry_run], seconds=schedule_interval)
+        scheduler.start()
+        try:
+            # 主线程继续运行，直到按Ctrl+C或发生异常
+            while True:
+                time.sleep(1)
+        except (KeyboardInterrupt, SystemExit):
+            # 关闭调度器
+            scheduler.shutdown()
+            click.echo("Scheduler shutdown successfully.")
 
 
 cli.add_command(add, 'add-cluster')

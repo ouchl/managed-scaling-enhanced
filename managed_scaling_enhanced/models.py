@@ -25,18 +25,14 @@ class Cluster(Base):
     total_cpu_count = Column(Integer)
     task_used_resource = Column(Float)
     task_cpu_count = Column(Integer)
-    yarn_apps_pending = Column(Integer)
-    yarn_total_virtual_cores = Column(Integer)
-    yarn_apps_running = Column(Integer)
-    yarn_reserved_virtual_cores = Column(Integer)
-    yarn_total_memory_mb = Column(Integer)
-    yarn_available_memory_mb = Column(Integer)
-    yarn_containers_pending = Column(Integer)
+    yarn_metrics = Column(JSON)
 
     def to_dict(self):
         d = {c.name: getattr(self, c.name) for c in self.__table__.columns if c.name != 'instance_fleets'}
         d['task_target_od_capacity'] = self.task_target_od_capacity
         d['task_target_spot_capacity'] = self.task_target_spot_capacity
+        d['avg_task_cpu_usage'] = self.avg_task_cpu_usage
+        d['avg_total_cpu_usage'] = self.avg_total_cpu_usage
         return d
 
     @property
@@ -97,7 +93,8 @@ class Cluster(Base):
 
     @property
     def avg_task_cpu_usage(self):
-        return self.task_used_resource/self.task_cpu_count
+        if self.task_cpu_count:
+            return self.task_used_resource/self.task_cpu_count
 
     @property
     def avg_total_cpu_usage(self):
@@ -114,7 +111,7 @@ class Cluster(Base):
         for k, v in self.to_dict().items():
             if isinstance(v, datetime):
                 d[k] = v.isoformat()
-            else:
+            elif k not in ['yarn_metrics']:
                 d[k] = v
         return pprint.pformat(d)
 
