@@ -14,7 +14,8 @@ setup(
         'click',
         'orjson',
         'tabulate',
-        'dataclasses'
+        'dataclasses',
+        'python-dateutil'
     ],
     entry_points={
         'console_scripts': [

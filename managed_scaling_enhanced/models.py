@@ -1,8 +1,9 @@
 from datetime import datetime
 
-from sqlalchemy import Column, String, JSON, DateTime, Integer, Float
+from sqlalchemy import Column, String, JSON, DateTime, Integer, Float, Index
 import pprint
 from managed_scaling_enhanced.database import Base, engine
+import requests
 
 
 class Cluster(Base):
@@ -20,19 +21,22 @@ class Cluster(Base):
     initial_managed_scaling_policy = Column(JSON)
     current_managed_scaling_policy = Column(JSON)
     instance_fleets = Column(JSON)
-    task_fleet_latest_ready_time = Column(DateTime)
-    total_used_resource = Column(Float)
-    total_cpu_count = Column(Integer)
-    task_used_resource = Column(Float)
-    task_cpu_count = Column(Integer)
+    fleet_latest_ready_time = Column(DateTime)
     yarn_metrics = Column(JSON)
+    cpu_usage = Column(Float)
+    master_dns_name = Column(String)
 
     def to_dict(self):
-        d = {c.name: getattr(self, c.name) for c in self.__table__.columns if c.name != 'instance_fleets'}
-        d['task_target_od_capacity'] = self.task_target_od_capacity
-        d['task_target_spot_capacity'] = self.task_target_spot_capacity
-        d['avg_task_cpu_usage'] = self.avg_task_cpu_usage
-        d['avg_total_cpu_usage'] = self.avg_total_cpu_usage
+        d = {
+            'Cluster ID': self.id,
+            'CPU usage lower bound': self.cpu_usage_lower_bound,
+            'CPU usage upper bound': self.cpu_usage_upper_bound,
+            'CPU usage': self.cpu_usage,
+            'Spot capacity': self.task_target_spot_capacity,
+            'OD capacity': self.task_target_od_capacity,
+            'Initial max capacity': self.initial_max_units,
+            'Max capacity': self.current_max_units
+        }
         return d
 
     @property
@@ -71,16 +75,6 @@ class Cluster(Base):
         if self.task_instance_fleet:
             return self.task_instance_fleet['Status']['State']
 
-    # @property
-    # def task_instance_fleet_ready_time(self):
-    #     if self.task_instance_fleet:
-    #         return self.task_instance_fleet['Status']['Timeline']['ReadyDateTime']
-    #
-    # @property
-    # def task_instance_fleet_ready_time_utc(self):
-    #     if self.task_instance_fleet_ready_time:
-    #         return self.task_instance_fleet_ready_time.astimezone(timezone.utc).replace(tzinfo=None)
-
     @property
     def task_target_od_capacity(self):
         if self.task_instance_fleet:
@@ -90,15 +84,6 @@ class Cluster(Base):
     def task_target_spot_capacity(self):
         if self.task_instance_fleet:
             return self.task_instance_fleet['TargetSpotCapacity']
-
-    @property
-    def avg_task_cpu_usage(self):
-        if self.task_cpu_count:
-            return self.task_used_resource/self.task_cpu_count
-
-    @property
-    def avg_total_cpu_usage(self):
-        return self.total_used_resource / self.total_cpu_count
 
     def modify_scaling_policy(self, max_units=None, max_od_units=None):
         if max_units:
@@ -115,6 +100,17 @@ class Cluster(Base):
                 d[k] = v
         return pprint.pformat(d)
 
+    def kill_app(self, app_id):
+        return requests.put(f"http://{self.master_dns_name}:8088/ws/v1/cluster/apps/{app_id}/state", json={'state': 'KILLED'}, timeout=5)
+
+    def list_running_apps(self):
+        r = requests.get(f"http://{self.master_dns_name}:8088/ws/v1/cluster/apps?states=RUNNING", timeout=5).json()
+        app_ids = []
+        if r['apps']:
+            for app in r['apps']['app']:
+                app_ids.append(app['id'])
+        return app_ids
+
 
 class Event(Base):
     __tablename__ = 'events'
@@ -125,6 +121,36 @@ class Event(Base):
     cluster_id = Column(Integer)
     event_time = Column(DateTime)
     data = Column(JSON)
+
+
+class CpuUsage(Base):
+    __tablename__ = 'cpu_usage'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    instance_id = Column(String)
+    total_seconds = Column(Float)
+    idle_seconds = Column(Float)
+    event_time = Column(DateTime, index=True)
+
+    __table_args__ = (
+        Index('idx_instance_id_time', 'instance_id', 'event_time'),
+    )
+
+    @property
+    def busy_time(self):
+        return self.total_seconds - self.idle_seconds
+
+
+class EMREvent(Base):
+    __tablename__ = 'emr_events'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_type = Column(String)
+    cluster_id = Column(String)
+    source = Column(String)
+    state = Column(String)
+    message = Column(String)
+    raw_message = Column(JSON)
+    event_time = Column(DateTime, index=True)
+    create_time = Column(DateTime, index=True)
 
 
 Base.metadata.create_all(engine)

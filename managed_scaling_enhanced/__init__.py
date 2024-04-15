@@ -11,8 +11,8 @@ log_dir = Path('log')
 log_dir.mkdir(parents=True, exist_ok=True)
 file_handler = logging.handlers.RotatingFileHandler(
     'log/managed-scaling.log',
-    maxBytes=10*1024*1024,
-    backupCount=5,
+    maxBytes=100*1024*1024,
+    backupCount=10,
 )
 file_handler.formatter = formatter
 file_handler.setLevel(logging.INFO)

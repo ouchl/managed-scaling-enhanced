@@ -1,36 +1,21 @@
 import json
 from datetime import datetime, timedelta, timezone
 import boto3
+from orjson import orjson
+from dateutil import parser
+
 from managed_scaling_enhanced.database import Session
-from managed_scaling_enhanced.models import Cluster
+from managed_scaling_enhanced.models import Cluster, CpuUsage, EMREvent
 import logging
-from pathlib import Path
 import requests
+from sqlalchemy import func
 from managed_scaling_enhanced.scale import resize_cluster
 
 
 logger = logging.getLogger(__name__)
 emr_client = boto3.client('emr')
 ec2_client = boto3.client('ec2')
-cw_client = boto3.client('cloudwatch')
-
-
-def get_ec2_types():
-    cache_path = Path('ec2_types.json')
-    if cache_path.exists():
-        with open(cache_path, 'r') as f:
-            ec2_type_cpu_map = json.load(f)
-    else:
-        ec2_type_cpu_map = {}
-        paginator = ec2_client.get_paginator('describe_instance_types')
-        page_iterator = paginator.paginate()
-
-        for page in page_iterator:
-            for instance_type in page['InstanceTypes']:
-                ec2_type_cpu_map[instance_type['InstanceType']] = instance_type['VCpuInfo']['DefaultVCpus']
-        with open(cache_path, 'w') as f:
-            json.dump(ec2_type_cpu_map, f)
-    return ec2_type_cpu_map
+sqs = boto3.client('sqs')
 
 
 def get_current_yarn_metrics(dns_name):
@@ -39,13 +24,13 @@ def get_current_yarn_metrics(dns_name):
     return {k: v for k, v in response.json().get('clusterMetrics', {}).items() if not k.endswith('AcrossPartition')}
 
 
-def get_instances(cluster: Cluster, fleet_type):
+def get_instances(cluster: Cluster):
     instances = []
     paginator = emr_client.get_paginator('list_instances')
     response_iterator = paginator.paginate(
         ClusterId=cluster.id,
-        InstanceFleetType=fleet_type,
         InstanceStates=['RUNNING'],
+        InstanceGroupTypes=['CORE', 'TASK'],
         PaginationConfig={
             'MaxItems': 100
         }
@@ -56,53 +41,59 @@ def get_instances(cluster: Cluster, fleet_type):
     return instances
 
 
-def update_cpu_usage(cluster: Cluster, ec2_type_cpu_map):
-    master_instances = get_instances(cluster, 'MASTER')
-    core_instances = get_instances(cluster, 'CORE')
-    task_instances = get_instances(cluster, 'TASK')
-    task_instance_ids = set(map(lambda x: x['Ec2InstanceId'], task_instances))
-    total_used_resource = 0
-    total_cpu_count = 0
-    task_used_resource = 0
-    task_cpu_count = 0
-    all_instances = master_instances + core_instances + task_instances
-    logger.info(f'There are {len(all_instances)} instances running in cluster {cluster.id}.')
-    logger.info(f'There are {len(task_instances)} task instances running in cluster {cluster.id}.')
+def get_cpu_seconds(instance):
+    dns_name = instance['PublicDnsName'] or instance['PrivateDnsName']
+    node_export_url = f'http://{dns_name}:9100/metrics'
+    total_seconds = 0
+    idle_seconds = 0
+    for line in requests.get(node_export_url).text.splitlines():
+        if line.startswith('node_cpu_seconds_total'):
+            seconds = float(line.split(' ')[1])
+            total_seconds += seconds
+            if 'mode="idle"' in line:
+                idle_seconds += seconds
+    return total_seconds, idle_seconds
 
-    task_fleet_ready_time = datetime.min
-    for instance in task_instances:
-        instance_ready_time = instance['Status']['Timeline']['ReadyDateTime'].astimezone(timezone.utc).replace(tzinfo=None)
-        task_fleet_ready_time = max(task_fleet_ready_time, instance_ready_time)
-    cluster.task_fleet_latest_ready_time = task_fleet_ready_time
 
-    for instance in all_instances:
+def get_cpu_utilization(instances, period, session):
+    old_cpu_seconds = 0
+    old_idle_seconds = 0
+    new_cpu_seconds = 0
+    new_idle_seconds = 0
+    for instance in instances:
         instance_id = instance['Ec2InstanceId']
-        instance_type = instance['InstanceType']
-        response = cw_client.get_metric_statistics(
-            Namespace='AWS/EC2',
-            MetricName='CPUUtilization',
-            Dimensions=[{'Name': 'InstanceId', 'Value': instance_id}],
-            StartTime=datetime.utcnow() - timedelta(minutes=cluster.cpu_usage_period_minutes),
-            EndTime=datetime.utcnow(),
-            Period=int(cluster.cpu_usage_period_minutes*60+300),
-            Statistics=['Average'],
-        )
-        if len(response['Datapoints']) == 0:
-            logger.info(f'Skipping instance {instance_id} because cloud watch metrics were not found.')
-            continue
-        cpu_count = ec2_type_cpu_map[instance_type]
-        total_used_resource += response['Datapoints'][0]['Average']/100 * cpu_count
-        total_cpu_count += cpu_count
-        if instance_id in task_instance_ids:
-            task_used_resource += response['Datapoints'][0]['Average'] / 100 * cpu_count
-            task_cpu_count += cpu_count
-    cluster.total_used_resource = total_used_resource
-    cluster.total_cpu_count = total_cpu_count
-    cluster.task_used_resource = task_used_resource
-    cluster.task_cpu_count = task_cpu_count
+        cpu_usage: CpuUsage = session.query(CpuUsage).\
+                                 filter(CpuUsage.instance_id == instance_id,
+                                        CpuUsage.event_time > (datetime.utcnow() - timedelta(minutes=period))).\
+                                 order_by(CpuUsage.event_time).first()
+        old_cpu_seconds += cpu_usage.total_seconds if cpu_usage else 0
+        old_idle_seconds += cpu_usage.idle_seconds if cpu_usage else 0
+        total_seconds, idle_seconds = get_cpu_seconds(instance)
+        session.add(CpuUsage(instance_id=instance_id,
+                             event_time=datetime.utcnow(),
+                             total_seconds=total_seconds,
+                             idle_seconds=idle_seconds))
+        new_cpu_seconds += total_seconds
+        new_idle_seconds += idle_seconds
+    return 1 - (new_idle_seconds - old_idle_seconds) / (new_cpu_seconds - old_cpu_seconds)
 
 
-def do_run(cluster, dry_run):
+def get_latest_ready_time(instances):
+    latest_ready_time = datetime.min
+    for instance in instances:
+        ready_time = instance['Status']['Timeline']['ReadyDateTime']
+        ready_time = ready_time.astimezone(timezone.utc).replace(tzinfo=None)
+        latest_ready_time = max(latest_ready_time, ready_time)
+    return latest_ready_time
+
+
+def update_cluster_status(cluster: Cluster, session):
+    instances = get_instances(cluster)
+    cluster.cpu_usage = get_cpu_utilization(instances, cluster.cpu_usage_period_minutes, session)
+    cluster.fleet_latest_ready_time = get_latest_ready_time(instances)
+
+
+def do_run(cluster, dry_run, session):
     response = emr_client.describe_cluster(ClusterId=cluster.id)
     if response['Cluster']['Status']['State'] not in ('RUNNING', 'WAITING'):
         logger.info(f'Skipping cluster {cluster.id} because it is not running.')
@@ -110,20 +101,45 @@ def do_run(cluster, dry_run):
     cluster.cluster_name = response['Cluster']['Name']
     master_public_dns = response['Cluster']['MasterPublicDnsName']
     cluster.yarn_metrics = get_current_yarn_metrics(master_public_dns)
+    cluster.master_dns_name = master_public_dns
     cluster.current_managed_scaling_policy = emr_client.get_managed_scaling_policy(ClusterId=cluster.id)['ManagedScalingPolicy']
     cluster.instance_fleets = emr_client.list_instance_fleets(ClusterId=cluster.id)['InstanceFleets']
-    update_cpu_usage(cluster, get_ec2_types())
-    logger.info(f'Cluster {cluster.id} information: \n{cluster.get_info_str()}')
+    update_cluster_status(cluster, session)
+    # logger.info(f'Cluster {cluster.id} information: \n{cluster.get_info_str()}')
     resize_cluster(cluster, dry_run)
-    # if scale_in(cluster, dry_run):
-    #     cluster.last_scale_in_ts = datetime.utcnow()
-    #     logger.info(f'Cluster {cluster.id} scaled in successfully.')
-    # elif scale_out(cluster, dry_run):
-    #     cluster.last_scale_out_ts = datetime.utcnow()
-    #     logger.info(f'Cluster {cluster.id} scaled out successfully.')
 
 
-def run(dry_run):
+def clean(session):
+    session.query(CpuUsage).filter(CpuUsage.event_time < (datetime.utcnow() - timedelta(days=1))).delete(synchronize_session=False)
+    session.query(EMREvent).filter(EMREvent.event_time < (datetime.utcnow() - timedelta(days=1))).delete(synchronize_session=False)
+
+
+def read_sqs(name):
+    queue_url = sqs.get_queue_url(QueueName=name)['QueueUrl']
+    response = sqs.receive_message(
+        QueueUrl=queue_url,
+        MaxNumberOfMessages=10,
+        VisibilityTimeout=30
+    )
+    messages = response.get('Messages', [])
+    with Session() as session:
+        for message in messages:
+            logger.debug(f'Received EMR event message: {message}')
+            body = orjson.loads(message['Body'])
+            event_type = body.get('detail-type')
+            event_time = parser.parse(body['time']).replace(tzinfo=None)
+            session.add(EMREvent(message=body.get('detail').get('message'), event_type=event_type,
+                                 cluster_id=body.get('detail').get('clusterId'),
+                                 state=body.get('detail').get('state'),
+                                 source=body.get('source'),
+                                 raw_message=body,
+                                 event_time=event_time, create_time=datetime.utcnow()))
+            session.commit()
+            # Assuming processing of the message is successful, delete the message
+            sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=message['ReceiptHandle'])
+
+
+def run(dry_run, event_queue):
     session = Session()
     clusters = session.query(Cluster).all()
     cluster_ids = [cluster.id for cluster in clusters]
@@ -133,13 +149,18 @@ def run(dry_run):
             with Session() as session:
                 logger.info(f'\n####################################### Start {cluster_id} ##########################################')
                 cluster = session.get(Cluster, cluster_id)
-                do_run(cluster, dry_run)
-                if not dry_run:
-                    session.commit()
+                do_run(cluster, dry_run, session)
+                session.commit()
                 logger.info(f'\n####################################### End {cluster_id} ##########################################\n\n\n')
         except Exception as e:
             logger.exception(f'Cluster {cluster_id} error: {e}')
+    if event_queue:
+        read_sqs(event_queue)
+    with Session() as session:
+        # clean table
+        clean(session)
+        session.commit()
 
 
 if __name__ == '__main__':
-    run(dry_run=True)
+    run(dry_run=True, event_queue=None)
