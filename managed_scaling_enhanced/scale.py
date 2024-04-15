@@ -110,11 +110,12 @@ def log_parameters(parameters):
 def scale_in(cluster: Cluster, dry_run: bool = False) -> bool:
     # the minimum task capacity
     min_task_capacity = max(cluster.current_min_units - cluster.current_max_core_units, 0)
-    target_capacity = math.ceil((cluster.cpu_usage / cluster.cpu_usage_upper_bound) * cluster.task_target_spot_capacity)
+    target_capacity = math.floor((cluster.cpu_usage / cluster.cpu_usage_upper_bound) * cluster.task_target_spot_capacity)
     target_capacity = max(target_capacity, min_task_capacity)
     scale_in_step = cluster.task_target_od_capacity + cluster.task_target_spot_capacity - target_capacity
+    logger.info(f'Target capacity: {target_capacity}. Minimum task capacity: {min_task_capacity}.')
     if scale_in_step <= 0:
-        logger.info(f'Skipping cluster {cluster.id} scaling in due to capacity to be reduced is not positive.')
+        logger.info(f'Skipping cluster {cluster.id} scaling in. Current capacity {cluster.task_target_spot_capacity} is good.')
         return False
     logger.info(f'Starting cluster {cluster.id} scaling in...')
     new_od_capacity = cluster.task_target_od_capacity

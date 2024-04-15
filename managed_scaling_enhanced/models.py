@@ -35,7 +35,8 @@ class Cluster(Base):
             'Spot capacity': self.task_target_spot_capacity,
             'OD capacity': self.task_target_od_capacity,
             'Initial max capacity': self.initial_max_units,
-            'Max capacity': self.current_max_units
+            'Max capacity': self.current_max_units,
+            'Min capacity': self.current_min_units
         }
         return d
 

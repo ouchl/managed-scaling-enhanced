@@ -8,7 +8,6 @@ from managed_scaling_enhanced.database import Session
 from managed_scaling_enhanced.models import Cluster, CpuUsage, EMREvent
 import logging
 import requests
-from sqlalchemy import func
 from managed_scaling_enhanced.scale import resize_cluster
 
 
@@ -55,26 +54,31 @@ def get_cpu_seconds(instance):
     return total_seconds, idle_seconds
 
 
-def get_cpu_utilization(instances, period, session):
+def get_cpu_utilization(instances, period):
     old_cpu_seconds = 0
     old_idle_seconds = 0
     new_cpu_seconds = 0
     new_idle_seconds = 0
-    for instance in instances:
-        instance_id = instance['Ec2InstanceId']
-        cpu_usage: CpuUsage = session.query(CpuUsage).\
-                                 filter(CpuUsage.instance_id == instance_id,
-                                        CpuUsage.event_time > (datetime.utcnow() - timedelta(minutes=period))).\
-                                 order_by(CpuUsage.event_time).first()
-        old_cpu_seconds += cpu_usage.total_seconds if cpu_usage else 0
-        old_idle_seconds += cpu_usage.idle_seconds if cpu_usage else 0
-        total_seconds, idle_seconds = get_cpu_seconds(instance)
-        session.add(CpuUsage(instance_id=instance_id,
-                             event_time=datetime.utcnow(),
-                             total_seconds=total_seconds,
-                             idle_seconds=idle_seconds))
-        new_cpu_seconds += total_seconds
-        new_idle_seconds += idle_seconds
+    with Session() as session:
+        for instance in instances:
+            instance_id = instance['Ec2InstanceId']
+            cpu_usage: CpuUsage = session.query(CpuUsage).\
+                                     filter(CpuUsage.instance_id == instance_id,
+                                            CpuUsage.event_time > (datetime.utcnow() - timedelta(minutes=period))).\
+                                     order_by(CpuUsage.event_time).first()
+            old_cpu_seconds += cpu_usage.total_seconds if cpu_usage else 0
+            old_idle_seconds += cpu_usage.idle_seconds if cpu_usage else 0
+            total_seconds, idle_seconds = get_cpu_seconds(instance)
+            session.add(CpuUsage(instance_id=instance_id,
+                                 event_time=datetime.utcnow(),
+                                 total_seconds=total_seconds,
+                                 idle_seconds=idle_seconds))
+            if cpu_usage:
+                new_cpu_seconds += total_seconds
+                new_idle_seconds += idle_seconds
+        session.commit()
+    if new_cpu_seconds == 0:
+        raise Exception("No CPU usage is found. This may happen in the first run. Please wait for the next run.")
     return 1 - (new_idle_seconds - old_idle_seconds) / (new_cpu_seconds - old_cpu_seconds)
 
 
@@ -87,13 +91,13 @@ def get_latest_ready_time(instances):
     return latest_ready_time
 
 
-def update_cluster_status(cluster: Cluster, session):
+def update_cluster_status(cluster: Cluster):
     instances = get_instances(cluster)
-    cluster.cpu_usage = get_cpu_utilization(instances, cluster.cpu_usage_period_minutes, session)
+    cluster.cpu_usage = get_cpu_utilization(instances, cluster.cpu_usage_period_minutes)
     cluster.fleet_latest_ready_time = get_latest_ready_time(instances)
 
 
-def do_run(cluster, dry_run, session):
+def do_run(cluster: Cluster, dry_run, session):
     response = emr_client.describe_cluster(ClusterId=cluster.id)
     if response['Cluster']['Status']['State'] not in ('RUNNING', 'WAITING'):
         logger.info(f'Skipping cluster {cluster.id} because it is not running.')
@@ -104,7 +108,7 @@ def do_run(cluster, dry_run, session):
     cluster.master_dns_name = master_public_dns
     cluster.current_managed_scaling_policy = emr_client.get_managed_scaling_policy(ClusterId=cluster.id)['ManagedScalingPolicy']
     cluster.instance_fleets = emr_client.list_instance_fleets(ClusterId=cluster.id)['InstanceFleets']
-    update_cluster_status(cluster, session)
+    update_cluster_status(cluster)
     # logger.info(f'Cluster {cluster.id} information: \n{cluster.get_info_str()}')
     resize_cluster(cluster, dry_run)
 
@@ -163,4 +167,4 @@ def run(dry_run, event_queue):
 
 
 if __name__ == '__main__':
-    run(dry_run=True, event_queue=None)
+    run(dry_run=True, event_queue=None, start_time=datetime.utcnow())
