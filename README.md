@@ -16,7 +16,8 @@ pip3 install -e .
 ### Usage
 Add cluster
 ```
-mse add-cluster --cluster-id j-xxxxx
+mse add-cluster --cluster-id j-xxxxx --cpu-usage-upper-bound 0.6 \
+--cpu-usage-lower-bound 0.4 --cpu-usage-period-minutes 15 --cool-down-period-minutes 5
 ```
 Check other cluster options
 ```
