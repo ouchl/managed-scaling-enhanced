@@ -59,7 +59,7 @@ def get_instances_proxy(url: str, cluster: Cluster, dc='uswest7'):
 
 
 def get_instances(cluster: Cluster):
-    url = os.getenv('proxy_url')
+    url = os.getenv('metadata_host')
     try:
         instances = get_instances_proxy(url, cluster)
     except Exception as e:
