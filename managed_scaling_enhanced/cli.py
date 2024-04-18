@@ -24,16 +24,45 @@ def cli():
 @click.option('--cpu-usage-lower-bound', default=0.4)
 @click.option('--cpu-usage-period-minutes', default=15)
 @click.option('--cool-down-period-minutes', default=5)
+@click.option('--max-capacity-limit', help='Maximum capacity limit')
 def add(cluster_id, cluster_name, cluster_group, cpu_usage_upper_bound, cpu_usage_lower_bound,
-        cpu_usage_period_minutes, cool_down_period_minutes):
+        cpu_usage_period_minutes, cool_down_period_minutes, max_capacity_limit):
     """Add an EMR cluster to be managed by this tool."""
     session = Session()
     cluster = Cluster(id=cluster_id, cluster_name=cluster_name,
                       cluster_group=cluster_group, cpu_usage_upper_bound=cpu_usage_upper_bound,
                       cpu_usage_lower_bound=cpu_usage_lower_bound, cpu_usage_period_minutes=cpu_usage_period_minutes,
-                      cool_down_period_minutes=cool_down_period_minutes)
+                      cool_down_period_minutes=cool_down_period_minutes, max_capacity_limit=max_capacity_limit)
     cluster.initial_managed_scaling_policy = emr_client.get_managed_scaling_policy(ClusterId=cluster.id)['ManagedScalingPolicy']
+    if max_capacity_limit is None:
+        cluster.max_capacity_limit = cluster.initial_max_units
     session.add(cluster)
+    session.commit()
+    session.close()
+
+
+@click.command()
+@click.option('--cluster-id', required=True, help='EMR cluster ID')
+@click.option('--cpu-usage-upper-bound')
+@click.option('--cpu-usage-lower-bound')
+@click.option('--cpu-usage-period-minutes')
+@click.option('--cool-down-period-minutes')
+@click.option('--max-capacity-limit')
+def modify(cluster_id, cpu_usage_upper_bound, cpu_usage_lower_bound,
+           cpu_usage_period_minutes, cool_down_period_minutes, max_capacity_limit):
+    """Modify a cluster configuration"""
+    session = Session()
+    cluster: Cluster = session.get(Cluster, cluster_id)
+    if cpu_usage_upper_bound is not None:
+        cluster.cpu_usage_upper_bound = cpu_usage_upper_bound
+    if cpu_usage_lower_bound is not None:
+        cluster.cpu_usage_lower_bound = cpu_usage_lower_bound
+    if cpu_usage_period_minutes is not None:
+        cluster.cpu_usage_period_minutes = cpu_usage_period_minutes
+    if cool_down_period_minutes is not None:
+        cluster.cool_down_period_minutes = cool_down_period_minutes
+    if max_capacity_limit is not None:
+        cluster.max_capacity_limit = max_capacity_limit
     session.commit()
     session.close()
 
@@ -148,6 +177,7 @@ def kill_test_job(cluster_id, job_number):
 
 
 cli.add_command(add, 'add-cluster')
+cli.add_command(modify, 'modify-cluster')
 cli.add_command(list_cluster, 'list-clusters')
 cli.add_command(delete_cluster, 'delete-cluster')
 cli.add_command(describe_cluster, 'describe-cluster')

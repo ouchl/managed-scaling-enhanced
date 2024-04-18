@@ -1,4 +1,4 @@
-import json
+import os
 from datetime import datetime, timedelta, timezone
 import boto3
 from orjson import orjson
@@ -9,6 +9,7 @@ from managed_scaling_enhanced.models import Cluster, CpuUsage, EMREvent
 import logging
 import requests
 from managed_scaling_enhanced.scale import resize_cluster
+from dataclasses import dataclass
 
 
 logger = logging.getLogger(__name__)
@@ -17,32 +18,58 @@ ec2_client = boto3.client('ec2')
 sqs = boto3.client('sqs')
 
 
+@dataclass
+class Instance:
+    instance_id: str
+    host_name: str
+
+
 def get_current_yarn_metrics(dns_name):
     response = requests.get(f"http://{dns_name}:8088/ws/v1/cluster/metrics", timeout=5)
     response.raise_for_status()
     return {k: v for k, v in response.json().get('clusterMetrics', {}).items() if not k.endswith('AcrossPartition')}
 
 
-def get_instances(cluster: Cluster):
+def get_instances_native(cluster: Cluster):
     instances = []
     paginator = emr_client.get_paginator('list_instances')
     response_iterator = paginator.paginate(
         ClusterId=cluster.id,
         InstanceStates=['RUNNING'],
-        InstanceGroupTypes=['CORE', 'TASK'],
+        InstanceGroupTypes=['MASTER', 'CORE', 'TASK'],
         PaginationConfig={
             'MaxItems': 100
         }
     )
     for page in response_iterator:
         for instance in page['Instances']:
-            instances.append(instance)
+            instances.append(Instance(instance_id=instance['Ec2InstanceId'],
+                                      host_name=instance['PublicDnsName'] or instance['PrivateDnsName']))
+    return instances
+
+
+def get_instances_proxy(url: str, cluster: Cluster, dc='uswest7'):
+    url = f'http://{url}/portal/get?dc={dc}&cluster={cluster.id}'
+    response = requests.get(url, timeout=5)
+    data = response.json()
+    instances = []
+    for ip in data['core_cluster_ip'] + data['task_cluster_ip']:
+        instances.append(Instance(instance_id=f'{cluster.id},{ip}', host_name=ip))
+    return instances
+
+
+def get_instances(cluster: Cluster):
+    url = os.getenv('proxy_url')
+    try:
+        instances = get_instances_proxy(url, cluster)
+    except Exception as e:
+        logger.info('Could not get instances from proxy. Trying get instances from native API.')
+        instances = get_instances_native(cluster)
     return instances
 
 
 def get_cpu_seconds(instance):
-    dns_name = instance['PublicDnsName'] or instance['PrivateDnsName']
-    node_export_url = f'http://{dns_name}:9100/metrics'
+    node_export_url = f'http://{instance.host_name}:9100/metrics'
     total_seconds = 0
     idle_seconds = 0
     for line in requests.get(node_export_url).text.splitlines():
@@ -61,15 +88,14 @@ def get_cpu_utilization(instances, period):
     new_idle_seconds = 0
     with Session() as session:
         for instance in instances:
-            instance_id = instance['Ec2InstanceId']
             cpu_usage: CpuUsage = session.query(CpuUsage).\
-                                     filter(CpuUsage.instance_id == instance_id,
+                                     filter(CpuUsage.instance_id == instance.instance_id,
                                             CpuUsage.event_time > (datetime.utcnow() - timedelta(minutes=period))).\
                                      order_by(CpuUsage.event_time).first()
             old_cpu_seconds += cpu_usage.total_seconds if cpu_usage else 0
             old_idle_seconds += cpu_usage.idle_seconds if cpu_usage else 0
             total_seconds, idle_seconds = get_cpu_seconds(instance)
-            session.add(CpuUsage(instance_id=instance_id,
+            session.add(CpuUsage(instance_id=instance.instance_id,
                                  event_time=datetime.utcnow(),
                                  total_seconds=total_seconds,
                                  idle_seconds=idle_seconds))
@@ -94,7 +120,7 @@ def get_latest_ready_time(instances):
 def update_cluster_status(cluster: Cluster):
     instances = get_instances(cluster)
     cluster.cpu_usage = get_cpu_utilization(instances, cluster.cpu_usage_period_minutes)
-    cluster.fleet_latest_ready_time = get_latest_ready_time(instances)
+    # cluster.instances_latest_ready_time = get_latest_ready_time(instances)
 
 
 def do_run(cluster: Cluster, dry_run, session):
@@ -107,7 +133,10 @@ def do_run(cluster: Cluster, dry_run, session):
     cluster.yarn_metrics = get_current_yarn_metrics(master_public_dns)
     cluster.master_dns_name = master_public_dns
     cluster.current_managed_scaling_policy = emr_client.get_managed_scaling_policy(ClusterId=cluster.id)['ManagedScalingPolicy']
-    cluster.instance_fleets = emr_client.list_instance_fleets(ClusterId=cluster.id)['InstanceFleets']
+    if cluster.is_fleet:
+        cluster.instance_fleets = emr_client.list_instance_fleets(ClusterId=cluster.id)['InstanceFleets']
+    else:
+        cluster.instance_groups = emr_client.list_instance_groups(ClusterId=cluster.id)['InstanceGroups']
     update_cluster_status(cluster)
     # logger.info(f'Cluster {cluster.id} information: \n{cluster.get_info_str()}')
     resize_cluster(cluster, dry_run)
@@ -123,7 +152,8 @@ def read_sqs(name):
     response = sqs.receive_message(
         QueueUrl=queue_url,
         MaxNumberOfMessages=10,
-        VisibilityTimeout=30
+        VisibilityTimeout=30,
+        WaitTimeSeconds=2
     )
     messages = response.get('Messages', [])
     with Session() as session:
@@ -167,4 +197,4 @@ def run(dry_run, event_queue):
 
 
 if __name__ == '__main__':
-    run(dry_run=True, event_queue=None, start_time=datetime.utcnow())
+    run(dry_run=True, event_queue=None)

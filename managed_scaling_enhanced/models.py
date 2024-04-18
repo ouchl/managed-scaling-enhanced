@@ -4,6 +4,7 @@ from sqlalchemy import Column, String, JSON, DateTime, Integer, Float, Index
 import pprint
 from managed_scaling_enhanced.database import Base, engine
 import requests
+from managed_scaling_enhanced.utils import ec2_types
 
 
 class Cluster(Base):
@@ -21,10 +22,12 @@ class Cluster(Base):
     initial_managed_scaling_policy = Column(JSON)
     current_managed_scaling_policy = Column(JSON)
     instance_fleets = Column(JSON)
-    fleet_latest_ready_time = Column(DateTime)
+    instance_groups = Column(JSON)
+    instances_latest_ready_time = Column(DateTime)
     yarn_metrics = Column(JSON)
     cpu_usage = Column(Float)
     master_dns_name = Column(String)
+    max_capacity_limit = Column(Integer)
 
     def to_dict(self):
         d = {
@@ -32,11 +35,12 @@ class Cluster(Base):
             'CPU usage lower bound': self.cpu_usage_lower_bound,
             'CPU usage upper bound': self.cpu_usage_upper_bound,
             'CPU usage': self.cpu_usage,
-            'Spot capacity': self.task_target_spot_capacity,
-            'OD capacity': self.task_target_od_capacity,
+            'Spot capacity': self.current_task_spot_capacity,
+            'OD capacity': self.current_task_od_capacity,
             'Initial max capacity': self.initial_max_units,
-            'Max capacity': self.current_max_units,
-            'Min capacity': self.current_min_units
+            'Current Max capacity': self.current_max_units,
+            'Current Min capacity': self.current_min_units,
+            'Max capacity limit': self.max_capacity_limit
         }
         return d
 
@@ -54,15 +58,18 @@ class Cluster(Base):
 
     @property
     def current_min_units(self):
-        return self.current_managed_scaling_policy['ComputeLimits']['MinimumCapacityUnits']
+        if self.current_managed_scaling_policy:
+            return self.current_managed_scaling_policy['ComputeLimits']['MinimumCapacityUnits']
 
     @property
     def current_max_units(self):
-        return self.current_managed_scaling_policy['ComputeLimits']['MaximumCapacityUnits']
+        if self.current_managed_scaling_policy:
+            return self.current_managed_scaling_policy['ComputeLimits']['MaximumCapacityUnits']
 
     @property
     def current_max_core_units(self):
-        return self.current_managed_scaling_policy['ComputeLimits']['MaximumCoreCapacityUnits']
+        if self.current_managed_scaling_policy:
+            return self.current_managed_scaling_policy['ComputeLimits']['MaximumCoreCapacityUnits']
 
     @property
     def task_instance_fleet(self):
@@ -71,10 +78,20 @@ class Cluster(Base):
                 if fleet['InstanceFleetType'] == 'TASK':
                     return fleet
 
+    # @property
+    # def task_instance_fleet_status(self):
+    #     if self.task_instance_fleet:
+    #         return self.task_instance_fleet['Status']['State']
+
     @property
-    def task_instance_fleet_status(self):
-        if self.task_instance_fleet:
-            return self.task_instance_fleet['Status']['State']
+    def not_resizing(self):
+        if self.is_fleet:
+            return self.task_instance_fleet['Status']['State'] == 'RUNNING'
+        else:
+            for group in self.instance_groups:
+                if group['Status']['State'] != 'RUNNING':
+                    return False
+            return True
 
     @property
     def task_target_od_capacity(self):
@@ -111,6 +128,56 @@ class Cluster(Base):
             for app in r['apps']['app']:
                 app_ids.append(app['id'])
         return app_ids
+
+    @property
+    def managed_scaling_unit_type(self):
+        return self.current_managed_scaling_policy['ComputeLimits']['UnitType']
+
+    @property
+    def is_fleet(self):
+        return self.current_managed_scaling_policy['ComputeLimits']['UnitType'] == 'InstanceFleetUnits'
+
+    @property
+    def current_task_spot_capacity(self):
+        if self.managed_scaling_unit_type == 'InstanceFleetUnits':
+            return self.task_target_spot_capacity
+        elif self.managed_scaling_unit_type == 'Instances':
+            instances = 0
+            for group in self.task_instance_groups:
+                if group['Market'] == 'SPOT':
+                    instances += group['RunningInstanceCount']
+            return instances
+        else:
+            count = 0
+            for group in self.task_instance_groups:
+                if group['Market'] == 'SPOT':
+                    count += group['RunningInstanceCount'] * ec2_types[group['InstanceType']]
+            return count
+
+    @property
+    def task_instance_groups(self):
+        return [group for group in self.instance_groups if group['InstanceGroupType'] == 'TASK']
+
+    @property
+    def current_task_od_capacity(self):
+        if self.managed_scaling_unit_type == 'InstanceFleetUnits':
+            return self.task_target_od_capacity
+        elif self.managed_scaling_unit_type == 'Instances':
+            instances = 0
+            for group in self.task_instance_groups:
+                if group['Market'] == 'ON_DEMAND':
+                    instances += group['RunningInstanceCount']
+            return instances
+        else:
+            count = 0
+            for group in self.task_instance_groups:
+                if group['Market'] == 'ON_DEMAND':
+                    count += group['RunningInstanceCount'] * ec2_types[group['InstanceType']]
+            return count
+
+    @property
+    def current_task_total_capacity(self):
+        return self.current_task_spot_capacity + self.current_task_od_capacity
 
 
 class Event(Base):
