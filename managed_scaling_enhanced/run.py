@@ -48,18 +48,18 @@ def get_instances_native(cluster: Cluster):
     return instances
 
 
-def get_instances_proxy(url: str, cluster: Cluster, dc='uswest7'):
-    url = f'http://{url}/portal/get?dc={dc}&cluster={cluster.id}'
+def get_instances_proxy(url: str, cluster: Cluster):
+    url = f'http://{url}/portal/emrautoscaling?cluster_id={cluster.id}'
     response = requests.get(url, timeout=5)
     data = response.json()
     instances = []
-    for ip in data['core_cluster_ip'] + data['task_cluster_ip']:
+    for ip in data['CORE'] + data['TASK']:
         instances.append(Instance(instance_id=f'{cluster.id},{ip}', host_name=ip))
     return instances
 
 
 def get_instances(cluster: Cluster):
-    url = os.getenv('metadata_host')
+    url = os.getenv('api_host')
     try:
         instances = get_instances_proxy(url, cluster)
     except Exception as e:

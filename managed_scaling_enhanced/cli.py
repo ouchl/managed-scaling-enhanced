@@ -176,6 +176,23 @@ def kill_test_job(cluster_id, job_number):
             click.echo(cluster.kill_app(app_id).text)
 
 
+@click.command()
+def reset():
+    """Reset clusters."""
+    session = Session()
+    clusters = session.query(Cluster).all()
+    for cluster in clusters:
+        if cluster.initial_max_units:
+            cluster.modify_scaling_policy(max_units=cluster.initial_max_units)
+            click.echo(f'Reset cluster {cluster.id} to initial max capacity {cluster.initial_max_units}')
+            emr_client.put_managed_scaling_policy(ClusterId=cluster.id,
+                                                  ManagedScalingPolicy=cluster.current_managed_scaling_policy)
+    click.echo(clusters)
+    session.commit()
+    session.close()
+
+
+
 cli.add_command(add, 'add-cluster')
 cli.add_command(modify, 'modify-cluster')
 cli.add_command(list_cluster, 'list-clusters')

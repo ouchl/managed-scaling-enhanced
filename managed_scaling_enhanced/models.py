@@ -23,7 +23,7 @@ class Cluster(Base):
     current_managed_scaling_policy = Column(JSON)
     instance_fleets = Column(JSON)
     instance_groups = Column(JSON)
-    instances_latest_ready_time = Column(DateTime)
+    # instances_latest_ready_time = Column(DateTime)
     yarn_metrics = Column(JSON)
     cpu_usage = Column(Float)
     master_dns_name = Column(String)
