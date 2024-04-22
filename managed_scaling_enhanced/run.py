@@ -66,7 +66,7 @@ def get_instances(cluster: Cluster):
     try:
         instances = get_instances_proxy(host, cluster)
     except Exception as e:
-        logger.warning(f'Could not get instances from proxy. Error: {e}. Trying get instances from native API.')
+        logger.warning(f'Could not get instances from host {host}. Error: {e}. Trying get instances from native API.')
         instances = get_instances_native(cluster)
     return instances
 
