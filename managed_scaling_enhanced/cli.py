@@ -7,6 +7,7 @@ from managed_scaling_enhanced.run import run
 import time
 import boto3
 import random
+from tabulate import tabulate
 
 emr_client = boto3.client('emr')
 
@@ -34,6 +35,7 @@ def add(cluster_id, cluster_name, cluster_group, cpu_usage_upper_bound, cpu_usag
                       cpu_usage_lower_bound=cpu_usage_lower_bound, cpu_usage_period_minutes=cpu_usage_period_minutes,
                       cool_down_period_minutes=cool_down_period_minutes, max_capacity_limit=max_capacity_limit)
     cluster.initial_managed_scaling_policy = emr_client.get_managed_scaling_policy(ClusterId=cluster.id)['ManagedScalingPolicy']
+    cluster.current_managed_scaling_policy = cluster.initial_managed_scaling_policy
     if max_capacity_limit is None:
         cluster.max_capacity_limit = cluster.initial_max_units
     session.add(cluster)
@@ -72,8 +74,15 @@ def list_cluster():
     """List info of all EMR clusters."""
     session = Session()
     clusters = session.query(Cluster).all()
-    clusters = [cluster.to_dict() for cluster in clusters]
-    click.echo(clusters)
+    dicts = []
+    for cluster in clusters:
+        dicts.append({'Cluster ID': cluster.id,
+                      'Cluster Name': cluster.cluster_name,
+                      'CPU Usage Upper Bound': cluster.cpu_usage_upper_bound,
+                      'CPU Usage Lower Bound': cluster.cpu_usage_lower_bound,
+                      'Cool Down': cluster.cool_down_period_minutes})
+    table = tabulate(dicts, headers="keys", tablefmt="grid")
+    click.echo(table)
     session.close()
 
 
@@ -187,10 +196,42 @@ def reset():
             click.echo(f'Reset cluster {cluster.id} to initial max capacity {cluster.initial_max_units}')
             emr_client.put_managed_scaling_policy(ClusterId=cluster.id,
                                                   ManagedScalingPolicy=cluster.current_managed_scaling_policy)
-    click.echo(clusters)
     session.commit()
     session.close()
 
+
+@click.command()
+@click.option('--cluster-id', help='EMR cluster ID')
+@click.option('--all-clusters', '-a', is_flag=True, help='Disable all clusters.')
+def disable_cluster(cluster_id, all_clusters):
+    """Disable an EMR cluster."""
+    clusters = []
+    session = Session()
+    if cluster_id:
+        clusters.append(session.get(Cluster, cluster_id))
+    elif all_clusters:
+        clusters = session.query(Cluster).all()
+    for cluster in clusters:
+        cluster.active = False
+    session.commit()
+    session.close()
+
+
+@click.command()
+@click.option('--cluster-id', help='EMR cluster ID')
+@click.option('--all-clusters', '-a', is_flag=True, help='Enable all clusters.')
+def enable_cluster(cluster_id, all_clusters):
+    """Enable an EMR cluster."""
+    clusters = []
+    session = Session()
+    if cluster_id:
+        clusters.append(session.get(Cluster, cluster_id))
+    elif all_clusters:
+        clusters = session.query(Cluster).all()
+    for cluster in clusters:
+        cluster.active = True
+    session.commit()
+    session.close()
 
 
 cli.add_command(add, 'add-cluster')
@@ -201,6 +242,9 @@ cli.add_command(describe_cluster, 'describe-cluster')
 cli.add_command(run_test_job, 'run-test-job')
 cli.add_command(kill_test_job, 'kill-test-job')
 cli.add_command(start, 'start')
+cli.add_command(reset, 'reset')
+cli.add_command(disable_cluster, 'disable-cluster')
+cli.add_command(enable_cluster, 'enable-cluster')
 
 if __name__ == '__main__':
     cli()

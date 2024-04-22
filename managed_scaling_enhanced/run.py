@@ -48,22 +48,25 @@ def get_instances_native(cluster: Cluster):
     return instances
 
 
-def get_instances_proxy(url: str, cluster: Cluster):
-    url = f'http://{url}/portal/emrautoscaling?cluster_id={cluster.id}'
+def get_instances_proxy(host: str, cluster: Cluster):
+    url = f'http://{host}/portal/emrautoscaling?cluster_id={cluster.id}'
     response = requests.get(url, timeout=5)
     data = response.json()
     instances = []
-    for ip in data['CORE'] + data['TASK']:
+    ips = data['CORE'] + data['MASTER']
+    if 'TASK' in data:
+        ips += data['TASK']
+    for ip in ips:
         instances.append(Instance(instance_id=f'{cluster.id},{ip}', host_name=ip))
     return instances
 
 
 def get_instances(cluster: Cluster):
-    url = os.getenv('api_host')
+    host = os.getenv('api_host')
     try:
-        instances = get_instances_proxy(url, cluster)
+        instances = get_instances_proxy(host, cluster)
     except Exception as e:
-        logger.info('Could not get instances from proxy. Trying get instances from native API.')
+        logger.warning(f'Could not get instances from proxy. Error: {e}. Trying get instances from native API.')
         instances = get_instances_native(cluster)
     return instances
 
@@ -183,6 +186,9 @@ def run(dry_run, event_queue):
             with Session() as session:
                 logger.info(f'\n####################################### Start {cluster_id} ##########################################')
                 cluster = session.get(Cluster, cluster_id)
+                if not cluster.active:
+                    logger.info(f'Skipping cluster {cluster_id} because it is not active.')
+                    continue
                 do_run(cluster, dry_run, session)
                 session.commit()
                 logger.info(f'\n####################################### End {cluster_id} ##########################################\n\n\n')

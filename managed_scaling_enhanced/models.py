@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Column, String, JSON, DateTime, Integer, Float, Index
+from sqlalchemy import Column, String, JSON, DateTime, Integer, Float, Index, Boolean
 import pprint
 from managed_scaling_enhanced.database import Base, engine
 import requests
@@ -17,8 +17,8 @@ class Cluster(Base):
     cpu_usage_lower_bound = Column(Float, default=0.4)
     cpu_usage_period_minutes = Column(Float, default=15)
     cool_down_period_minutes = Column(Float, default=5)
-    last_scale_in_ts = Column(DateTime)
-    last_scale_out_ts = Column(DateTime)
+    last_scale_in_ts = Column(DateTime, default=datetime.min)
+    last_scale_out_ts = Column(DateTime, default=datetime.min)
     initial_managed_scaling_policy = Column(JSON)
     current_managed_scaling_policy = Column(JSON)
     instance_fleets = Column(JSON)
@@ -28,6 +28,7 @@ class Cluster(Base):
     cpu_usage = Column(Float)
     master_dns_name = Column(String)
     max_capacity_limit = Column(Integer)
+    active = Column(Boolean, default=True)
 
     def to_dict(self):
         d = {
@@ -156,7 +157,8 @@ class Cluster(Base):
 
     @property
     def task_instance_groups(self):
-        return [group for group in self.instance_groups if group['InstanceGroupType'] == 'TASK']
+        if self.instance_groups:
+            return [group for group in self.instance_groups if group['InstanceGroupType'] == 'TASK']
 
     @property
     def current_task_od_capacity(self):

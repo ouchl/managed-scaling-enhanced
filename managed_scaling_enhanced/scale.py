@@ -42,12 +42,13 @@ def check_requirements(cluster: Cluster):
                                flag=cluster.not_resizing,
                                message=f'Current task fleet or instance groups must not be resizing.')
     results.append(result)
-    # fleet_ready_duration = (datetime.utcnow() - cluster.instances_latest_ready_time).total_seconds()
-    # result = ResizeCheckResult(scope='Both',
-    #                            description='Cool down',
-    #                            flag=fleet_ready_duration > cluster.cool_down_period_minutes * 60,
-    #                            message=f'Task instance fleet ready time {cluster.instances_latest_ready_time} must be within cool down minutes {cluster.cool_down_period_minutes}')
-    # results.append(result)
+    last_action_time = max(cluster.last_scale_in_ts, cluster.last_scale_out_ts)
+    last_action_seconds = (datetime.utcnow() - last_action_time).total_seconds()
+    result = ResizeCheckResult(scope='Both',
+                               description='Cool down',
+                               flag=last_action_seconds > cluster.cool_down_period_minutes * 60,
+                               message=f'Last action time {last_action_time} must be within cool down minutes {cluster.cool_down_period_minutes}')
+    results.append(result)
 
     result = ResizeCheckResult(scope='Scale In',
                                description='CPU utilization',
@@ -169,9 +170,7 @@ def scale_in(cluster: Cluster, dry_run: bool = False) -> bool:
 
     log_parameters(changes)
 
-    if not dry_run:
-        emr_client.put_managed_scaling_policy(ClusterId=cluster.id,
-                                              ManagedScalingPolicy=cluster.current_managed_scaling_policy)
+    cluster.last_scale_in_ts = datetime.utcnow()
     return True
 
 
@@ -188,4 +187,5 @@ def scale_out(cluster: Cluster, dry_run):
         emr_client.put_managed_scaling_policy(ClusterId=cluster.id,
                                               ManagedScalingPolicy=cluster.current_managed_scaling_policy)
     flag = True
+    cluster.last_scale_out_ts = datetime.utcnow()
     return flag
