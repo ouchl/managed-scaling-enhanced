@@ -84,12 +84,14 @@ def resize_cluster(cluster, session, dry_run):
         return
     if not cluster.not_resizing:
         logger.info(f'Skip resizing cluster {cluster.id}.')
-        # return
+        if not dry_run:
+            return
     last_action_time = max(cluster.last_scale_in_ts, cluster.last_scale_out_ts)
     last_action_seconds = (datetime.utcnow() - last_action_time).total_seconds()
     if last_action_seconds < cluster.cool_down_period_minutes * 60:
         logger.info(f'Skip cooling down cluster {cluster.id}.')
-        return
+        if not dry_run:
+            return
 
     if target_units < cluster.current_max_units:
         logger.info(f'------------------- Start to scale in ----------------------')
@@ -115,11 +117,13 @@ def log_parameters(parameters):
 def compute_target_max_units(cluster: Cluster, avg_metric: AvgMetric):
     step = 0
     if cluster.resize_policy == ResizePolicy.CPU_BASED:
+        logger.info('Use CPU based policy...')
         if avg_metric.cpu_utilization < cluster.cpu_usage_lower_bound:
             step = - (1 - avg_metric.cpu_utilization / cluster.cpu_usage_upper_bound) * cluster.current_max_units
         elif avg_metric.cpu_utilization > cluster.cpu_usage_upper_bound:
             step = (avg_metric.cpu_utilization / cluster.cpu_usage_upper_bound - 1) * cluster.current_max_units
     elif cluster.resize_policy == ResizePolicy.RESOURCE_BASED:
+        logger.info('Use resource based policy...')
         if avg_metric.yarn_pending_vcore > 0 or avg_metric.yarn_pending_mem > 0:
             step1 = (avg_metric.yarn_pending_vcore / avg_metric.yarn_total_vcore) * cluster.current_max_units
             step2 = (avg_metric.yarn_pending_mem / avg_metric.yarn_total_mem) * cluster.current_max_units
@@ -128,13 +132,14 @@ def compute_target_max_units(cluster: Cluster, avg_metric: AvgMetric):
             step1 = - (1 - (avg_metric.yarn_allocated_mem + avg_metric.yarn_reserved_mem) / avg_metric.yarn_total_mem) * cluster.current_max_units
             step2 = - (1 - (avg_metric.yarn_allocated_vcore + avg_metric.yarn_reserved_vcore) / avg_metric.yarn_total_vcore) * cluster.current_max_units
             step = max(step1, step2)
+            step = min(step, 0)
     if step > 0:
         step = math.ceil(step * cluster.scale_out_factor)
     elif step < 0:
         step = math.floor(step * cluster.scale_in_factor)
     target_units = cluster.current_max_units + step
     target_units = min(target_units, cluster.max_capacity_limit)
-    target_units = max(target_units, cluster.current_min_units)
+    target_units = max(target_units, cluster.current_min_units + 1)
     return target_units
 
 
