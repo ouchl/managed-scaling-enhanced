@@ -1,6 +1,6 @@
 from typing import List
 
-from managed_scaling_enhanced.models import Cluster, AvgMetric, ResizePolicy
+from managed_scaling_enhanced.models import Cluster, AvgMetric, ResizePolicy, Event
 import logging
 from datetime import datetime
 import boto3
@@ -78,7 +78,7 @@ def resize_cluster(cluster, session, dry_run):
     # table = tabulate(results_dicts, headers="keys", tablefmt="grid")
     # logger.info(f'------------------------------- Check Results ---------------------------\n{table}')
     target_units = compute_target_max_units(cluster, avg_metric)
-    logger.info(f'Computed target units are: {target_units}')
+    logger.info(f'Computed target units: {target_units}')
     if target_units == cluster.current_max_units:
         logger.info(f'Skip cluster {cluster.id}. Target unit: {target_units}. Current max units: {cluster.current_max_units}')
         return
@@ -92,17 +92,24 @@ def resize_cluster(cluster, session, dry_run):
         logger.info(f'Skip cooling down cluster {cluster.id}.')
         if not dry_run:
             return
-
+    action = 'nothing'
     if target_units < cluster.current_max_units:
         logger.info(f'------------------- Start to scale in ----------------------')
         scale_in(cluster, target_units, dry_run)
+        action = 'scale in'
         logger.info(f'------------------- Finished scaling in ----------------------')
-        return
-    else:
+    elif target_units > cluster.current_max_units:
         logger.info(f'------------------- Start to scale out ----------------------')
         scale_out(cluster, target_units, dry_run)
         logger.info(f'------------------- Finished scaling out ----------------------')
-        return
+        action = 'scale out'
+    event = Event()
+    event.cluster_id = cluster.id
+    event.event_time = datetime.utcnow()
+    event.max_units = target_units
+    event.action = action
+    session.add(event)
+    session.commit()
 
 
 def log_table_str(data: List[dataclass]):
@@ -140,12 +147,11 @@ def compute_target_max_units(cluster: Cluster, avg_metric: AvgMetric):
     target_units = cluster.current_max_units + step
     target_units = min(target_units, cluster.max_capacity_limit)
     target_units = max(target_units, cluster.current_min_units + 1)
+    target_units = max(target_units, cluster.current_max_core_units)
     return target_units
 
 
 def scale_in(cluster: Cluster, target_units, dry_run: bool = False) -> bool:
-    # the minimum task capacity
-    min_task_capacity = max(cluster.current_min_units - cluster.current_max_core_units, 0)
     delta = cluster.current_max_units - target_units
     logger.info(f'Starting cluster {cluster.id} scaling in...')
     new_od_capacity = cluster.current_task_od_capacity

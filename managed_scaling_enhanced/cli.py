@@ -143,8 +143,9 @@ def start(schedule_interval, run_once, dry_run, event_queue):
 @click.option('--cluster-id', required=True, help='EMR cluster ID')
 @click.option('--job-number', default=1, help='Number of jobs to run')
 @click.option('--num-executors', default='1')
+@click.option('--executor-cores', default='1')
 @click.option('--executor-memory', default='1G')
-def run_test_job(cluster_id, job_number, num_executors, executor_memory):
+def run_test_job(cluster_id, job_number, num_executors, executor_memory, executor_cores):
     """Run test job."""
     step = {
         'Name': 'Pi',
@@ -157,7 +158,7 @@ def run_test_job(cluster_id, job_number, num_executors, executor_memory):
                 '--master', 'yarn',
                 '--executor-memory', executor_memory,
                 '--num-executors', num_executors,
-                '--executor-cores', '1',
+                '--executor-cores', executor_cores,
                 "--conf", "spark.dynamicAllocation.enabled=false",
                 '--class', 'org.apache.spark.examples.SparkPi',
                 '/usr/lib/spark/examples/jars/spark-examples.jar',

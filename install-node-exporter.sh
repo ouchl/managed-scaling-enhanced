@@ -1,7 +1,7 @@
 #!/bin/bash
 
-curl -LO https://github.com/prometheus/node_exporter/releases/download/v1.7.0/node_exporter-1.7.0.linux-amd64.tar.gz
-
+#curl -LO https://github.com/prometheus/node_exporter/releases/download/v1.7.0/node_exporter-1.7.0.linux-amd64.tar.gz
+aws s3 cp s3://habliang/node_exporter-1.7.0.linux-amd64.tar.gz .
 tar xvf node_exporter-1.7.0.linux-amd64.tar.gz
 
 cd node_exporter-1.7.0.linux-amd64

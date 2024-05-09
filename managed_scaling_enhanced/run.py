@@ -4,7 +4,7 @@ from orjson import orjson
 from dateutil import parser
 
 from managed_scaling_enhanced.database import Session
-from managed_scaling_enhanced.models import Cluster, CpuUsage, EMREvent
+from managed_scaling_enhanced.models import Cluster, CpuUsage, EMREvent, Event
 import logging
 from managed_scaling_enhanced.scale import resize_cluster
 from managed_scaling_enhanced.metrics import *
@@ -52,8 +52,13 @@ def do_run(cluster: Cluster, dry_run, session):
 
 
 def clean(session):
-    session.query(CpuUsage).filter(CpuUsage.event_time < (datetime.utcnow() - timedelta(days=1))).delete(synchronize_session=False)
-    session.query(EMREvent).filter(EMREvent.event_time < (datetime.utcnow() - timedelta(days=1))).delete(synchronize_session=False)
+    retention_days = 2
+    session.query(Metric).filter(Metric.event_time < (datetime.utcnow() - timedelta(days=retention_days))).delete(synchronize_session=False)
+    session.query(AvgMetric).filter(AvgMetric.event_time < (datetime.utcnow() - timedelta(days=retention_days))).delete(synchronize_session=False)
+    session.query(Event).filter(Event.event_time < (datetime.utcnow() - timedelta(days=retention_days))).delete(
+        synchronize_session=False)
+    session.query(EMREvent).filter(EMREvent.event_time < (datetime.utcnow() - timedelta(days=retention_days))).delete(
+        synchronize_session=False)
 
 
 def read_sqs(name):
@@ -90,14 +95,14 @@ def run(dry_run, event_queue):
     for cluster_id in cluster_ids:
         try:
             with Session() as session:
-                logger.info(f'\n####################################### Start {cluster_id} ##########################################')
+                logger.info(f'####################################### Start {cluster_id} ##########################################')
                 cluster = session.get(Cluster, cluster_id)
                 if not cluster.active:
                     logger.info(f'Skipping cluster {cluster_id} because it is not active.')
                     continue
                 do_run(cluster, dry_run, session)
                 session.commit()
-                logger.info(f'\n####################################### End {cluster_id} ##########################################\n\n\n')
+                logger.info(f'####################################### End {cluster_id} ##########################################\n\n\n')
         except Exception as e:
             logger.exception(f'Cluster {cluster_id} error: {e}')
     if event_queue:

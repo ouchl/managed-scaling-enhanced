@@ -87,14 +87,23 @@ class Cluster(Base):
                     return fleet
 
     @property
+    def core_instance_fleet(self):
+        if self.instance_fleets:
+            for fleet in self.instance_fleets:
+                if fleet['InstanceFleetType'] == 'CORE':
+                    return fleet
+
+    @property
     def not_resizing(self):
         if self.is_fleet:
-            return self.task_instance_fleet['Status']['State'] == 'RUNNING'
+            for fleet in self.instance_fleets:
+                if fleet['Status']['State'] != 'RUNNING':
+                    return False
         else:
             for group in self.instance_groups:
                 if group['Status']['State'] != 'RUNNING':
                     return False
-            return True
+        return True
 
     @property
     def task_target_od_capacity(self):
@@ -190,9 +199,14 @@ class Event(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     run_id = Column(Integer, index=True)
     action = Column(String(255))
-    cluster_id = Column(Integer)
+    cluster_id = Column(String(20))
     event_time = Column(DateTime)
+    max_units = Column(Integer)
     data = Column(JSON)
+
+    __table_args__ = (
+        Index('idx_cluster_id_time', 'cluster_id', 'event_time'),
+    )
 
 
 class CpuUsage(Base):
