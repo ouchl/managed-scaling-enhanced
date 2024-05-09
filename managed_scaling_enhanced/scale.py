@@ -1,6 +1,6 @@
 from typing import List
 
-from managed_scaling_enhanced.models import Cluster
+from managed_scaling_enhanced.models import Cluster, AvgMetric, ResizePolicy
 import logging
 from datetime import datetime
 import boto3
@@ -8,6 +8,7 @@ import math
 from dataclasses import dataclass, asdict
 from tabulate import tabulate
 from managed_scaling_enhanced.utils import ec2_types
+from sqlalchemy import desc
 
 logger = logging.getLogger(__name__)
 emr_client = boto3.client('emr')
@@ -28,14 +29,14 @@ class ParameterChange:
     after: str
 
 
-def check_requirements(cluster: Cluster):
+def check_requirements(cluster: Cluster, metric: AvgMetric):
     results = []
     # has running task instances to scale in
-    result = ResizeCheckResult(scope='Scale In',
-                               description='Task instance number',
-                               flag=cluster.current_task_total_capacity > 0,
-                               message='The cluster must have at least one task instance to scale in.')
-    results.append(result)
+    # result = ResizeCheckResult(scope='Scale In',
+    #                            description='Task instance number',
+    #                            flag=cluster.current_task_total_capacity > 0,
+    #                            message='The cluster must have at least one task instance to scale in.')
+    # results.append(result)
 
     result = ResizeCheckResult(scope='Both',
                                description='Task fleet/instance group status',
@@ -50,51 +51,54 @@ def check_requirements(cluster: Cluster):
                                message=f'Last action time {last_action_time} must be within cool down minutes {cluster.cool_down_period_minutes}')
     results.append(result)
 
-    result = ResizeCheckResult(scope='Scale In',
-                               description='CPU utilization',
-                               flag=cluster.cpu_usage < cluster.cpu_usage_lower_bound,
-                               message=f'Cluster total CPU usage {cluster.cpu_usage} should be lower than cluster lower bound {cluster.cpu_usage_lower_bound}.')
-    results.append(result)
-
-    result = ResizeCheckResult(scope='Scale Out',
-                               description='CPU utilization',
-                               flag=cluster.cpu_usage > cluster.cpu_usage_upper_bound,
-                               message=f'Cluster total CPU usage {cluster.cpu_usage} should be higher than cluster upper bound {cluster.cpu_usage_upper_bound}.')
-    results.append(result)
+    # result = ResizeCheckResult(scope='Scale In',
+    #                            description='CPU utilization',
+    #                            flag=metric.cpu_utilization < cluster.cpu_usage_lower_bound,
+    #                            message=f'Cluster total CPU usage {metric.cpu_utilization} should be lower than cluster lower bound {cluster.cpu_usage_lower_bound}.')
+    # results.append(result)
+    #
+    # result = ResizeCheckResult(scope='Scale Out',
+    #                            description='CPU utilization',
+    #                            flag=metric.cpu_utilization > cluster.cpu_usage_upper_bound,
+    #                            message=f'Cluster total CPU usage {metric.cpu_utilization} should be higher than cluster upper bound {cluster.cpu_usage_upper_bound}.')
+    # results.append(result)
     return results
 
 
-def resize_cluster(cluster, dry_run):
-    results = check_requirements(cluster)
-    results_dicts = [asdict(result) for result in results]
-    yarn_metrics_dicts = [{'metric': k, 'value': v} for k, v in cluster.yarn_metrics.items()]
-    table = tabulate(yarn_metrics_dicts, headers="keys", tablefmt="grid")
-    logger.info(f'------------------------ Yarn Metrics ---------------------\n{table}')
+def resize_cluster(cluster, session, dry_run):
+    avg_metric = session.query(AvgMetric).filter(AvgMetric.cluster_id == cluster.id).order_by(desc(AvgMetric.event_time)).first()
+    # results = check_requirements(cluster, avg_metric)
+    # results_dicts = [asdict(result) for result in results]
+    # yarn_metrics_dicts = [{'metric': k, 'value': v} for k, v in cluster.yarn_metrics.items()]
+    # table = tabulate(yarn_metrics_dicts, headers="keys", tablefmt="grid")
+    logger.info(f'------------------------ Average Yarn Metrics ---------------------\n{avg_metric.__dict__}')
     cluster_status_dicts = [{'key': k, 'value': v} for k, v in cluster.to_dict().items()]
     table = tabulate(cluster_status_dicts, headers="keys", tablefmt="grid")
-    logger.info(f'------------------------ Cluster Status ---------------------\n{table}')
-    table = tabulate(results_dicts, headers="keys", tablefmt="grid")
-    logger.info(f'------------------------------- Check Results ---------------------------\n{table}')
-    scale_in_flag = True
-    for result in results:
-        if result.scope in ('Scale In', 'Both') and not result.flag:
-            logger.info(f'Skip scaling in. Reason: {result.message}')
-            scale_in_flag = False
-            break
-    if scale_in_flag:
+    logger.info(f'------------------------ Cluster Status ---------------------\n{cluster.to_dict()}')
+    # table = tabulate(results_dicts, headers="keys", tablefmt="grid")
+    # logger.info(f'------------------------------- Check Results ---------------------------\n{table}')
+    target_units = compute_target_max_units(cluster, avg_metric)
+    logger.info(f'Computed target units are: {target_units}')
+    if target_units == cluster.current_max_units:
+        logger.info(f'Skip cluster {cluster.id}. Target unit: {target_units}. Current max units: {cluster.current_max_units}')
+        return
+    if not cluster.not_resizing:
+        logger.info(f'Skip resizing cluster {cluster.id}.')
+        # return
+    last_action_time = max(cluster.last_scale_in_ts, cluster.last_scale_out_ts)
+    last_action_seconds = (datetime.utcnow() - last_action_time).total_seconds()
+    if last_action_seconds < cluster.cool_down_period_minutes * 60:
+        logger.info(f'Skip cooling down cluster {cluster.id}.')
+        return
+
+    if target_units < cluster.current_max_units:
         logger.info(f'------------------- Start to scale in ----------------------')
-        scale_in(cluster, dry_run)
+        scale_in(cluster, target_units, dry_run)
         logger.info(f'------------------- Finished scaling in ----------------------')
         return
-    scale_out_flag = True
-    for result in results:
-        if result.scope in ('Scale Out', 'Both') and not result.flag:
-            logger.info(f'Skip scaling out. Reason: {result.message}')
-            scale_out_flag = False
-            break
-    if scale_out_flag:
+    else:
         logger.info(f'------------------- Start to scale out ----------------------')
-        scale_out(cluster, dry_run)
+        scale_out(cluster, target_units, dry_run)
         logger.info(f'------------------- Finished scaling out ----------------------')
         return
 
@@ -108,30 +112,51 @@ def log_parameters(parameters):
     logger.info(f'Parameters:\n{log_table_str(parameters)}')
 
 
-def scale_in(cluster: Cluster, dry_run: bool = False) -> bool:
+def compute_target_max_units(cluster: Cluster, avg_metric: AvgMetric):
+    step = 0
+    if cluster.resize_policy == ResizePolicy.CPU_BASED:
+        if avg_metric.cpu_utilization < cluster.cpu_usage_lower_bound:
+            step = - (1 - avg_metric.cpu_utilization / cluster.cpu_usage_upper_bound) * cluster.current_max_units
+        elif avg_metric.cpu_utilization > cluster.cpu_usage_upper_bound:
+            step = (avg_metric.cpu_utilization / cluster.cpu_usage_upper_bound - 1) * cluster.current_max_units
+    elif cluster.resize_policy == ResizePolicy.RESOURCE_BASED:
+        if avg_metric.yarn_pending_vcore > 0 or avg_metric.yarn_pending_mem > 0:
+            step1 = (avg_metric.yarn_pending_vcore / avg_metric.yarn_total_vcore) * cluster.current_max_units
+            step2 = (avg_metric.yarn_pending_mem / avg_metric.yarn_total_mem) * cluster.current_max_units
+            step = max(step1, step2)
+        else:
+            step1 = - (1 - (avg_metric.yarn_allocated_mem + avg_metric.yarn_reserved_mem) / avg_metric.yarn_total_mem) * cluster.current_max_units
+            step2 = - (1 - (avg_metric.yarn_allocated_vcore + avg_metric.yarn_reserved_vcore) / avg_metric.yarn_total_vcore) * cluster.current_max_units
+            step = max(step1, step2)
+    if step > 0:
+        step = math.ceil(step * cluster.scale_out_factor)
+    elif step < 0:
+        step = math.floor(step * cluster.scale_in_factor)
+    target_units = cluster.current_max_units + step
+    target_units = min(target_units, cluster.max_capacity_limit)
+    target_units = max(target_units, cluster.current_min_units)
+    return target_units
+
+
+def scale_in(cluster: Cluster, target_units, dry_run: bool = False) -> bool:
     # the minimum task capacity
     min_task_capacity = max(cluster.current_min_units - cluster.current_max_core_units, 0)
-    target_capacity = math.floor((cluster.cpu_usage / cluster.cpu_usage_upper_bound) * cluster.current_task_total_capacity)
-    target_capacity = max(target_capacity, min_task_capacity)
-    scale_in_step = cluster.current_task_total_capacity - target_capacity
-    logger.info(f'Current capacity: {cluster.current_task_total_capacity}. Target capacity: {target_capacity}. Minimum task capacity: {min_task_capacity}.')
-    if scale_in_step <= 0:
-        logger.info(f'Skipping cluster {cluster.id} scaling in. Current capacity {cluster.current_task_total_capacity} is good.')
-        return False
+    delta = cluster.current_max_units - target_units
     logger.info(f'Starting cluster {cluster.id} scaling in...')
     new_od_capacity = cluster.current_task_od_capacity
     new_spot_capacity = cluster.current_task_spot_capacity
-    if new_spot_capacity >= scale_in_step:
-        new_spot_capacity -= scale_in_step
+    if new_spot_capacity >= delta:
+        new_spot_capacity -= delta
     else:
-        scale_in_step -= new_spot_capacity
+        delta -= new_spot_capacity
         new_spot_capacity = 0
-        new_od_capacity -= scale_in_step
-    new_max_units = target_capacity + cluster.current_max_core_units + 1
+        new_od_capacity -= delta
+    new_od_capacity = max(new_od_capacity, 0)
     changes = [ParameterChange(parameter='MaximumCapacityUnits',
-                               before=cluster.current_max_units, after=str(new_max_units))]
+                               before=cluster.current_max_units, after=str(target_units))]
 
-    cluster.modify_scaling_policy(max_units=new_max_units)
+    cluster.modify_scaling_policy(max_units=target_units)
+
     if not dry_run:
         emr_client.put_managed_scaling_policy(ClusterId=cluster.id,
                                               ManagedScalingPolicy=cluster.current_managed_scaling_policy)
@@ -149,7 +174,6 @@ def scale_in(cluster: Cluster, dry_run: bool = False) -> bool:
                                                  'TargetSpotCapacity': new_spot_capacity
                                              })
     else:
-        total_capacity = cluster.current_task_total_capacity
         instance_groups = []
         sorted_groups = sorted(cluster.task_instance_groups, key=lambda x: 0 if x['Market'] == 'SPOT' else 1)
         for group in sorted_groups:
@@ -157,13 +181,13 @@ def scale_in(cluster: Cluster, dry_run: bool = False) -> bool:
                 units = group['RunningInstanceCount']
             else:
                 units = group['RunningInstanceCount'] * ec2_types[group['InstanceType']]
-            if units >= total_capacity - target_capacity:
-                instance_groups.append({'InstanceGroupId': group['Id'], 'InstanceCount': units-(total_capacity - target_capacity)})
+            if units >= delta:
+                instance_groups.append({'InstanceGroupId': group['Id'], 'InstanceCount': units - delta})
                 break
             else:
                 instance_groups.append({'InstanceGroupId': group['Id'],
                                         'InstanceCount': 0})
-                total_capacity -= units
+                delta -= units
         logger.info(f'Instance groups modification: {instance_groups}')
         if not dry_run:
             emr_client.modify_instance_groups(ClusterId=cluster.id, InstanceGroups=instance_groups)
@@ -174,14 +198,12 @@ def scale_in(cluster: Cluster, dry_run: bool = False) -> bool:
     return True
 
 
-def scale_out(cluster: Cluster, dry_run):
-    new_max_units = min(cluster.max_capacity_limit, cluster.current_max_units * (cluster.cpu_usage / cluster.cpu_usage_upper_bound))
-    new_max_units = math.ceil(new_max_units)
+def scale_out(cluster: Cluster, target_units, dry_run):
     changes = [
         ParameterChange(parameter='MaximumCapacityUnits', before=cluster.current_max_units,
-                        after=str(new_max_units))]
+                        after=str(target_units))]
     log_parameters(changes)
-    cluster.modify_scaling_policy(max_units=new_max_units)
+    cluster.modify_scaling_policy(max_units=target_units)
     # logger.info(f'New managed policy max units: {new_max_units}')
     if not dry_run:
         emr_client.put_managed_scaling_policy(ClusterId=cluster.id,

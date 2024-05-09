@@ -13,6 +13,13 @@ Dev environment
 ```
 pip3 install -e .
 ```
+Environment variables
+```
+export AWS_DEFAULT_REGION=us-west-2
+export DB_CONN_STR='sqlite:///data.db'
+export DB_CONN_STR='mysql+pymysql://username:password@hostname/database_name?charset=utf8mb4'
+export api_host=
+```
 ### Usage
 Add cluster
 ```

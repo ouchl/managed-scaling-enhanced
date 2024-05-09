@@ -15,7 +15,9 @@ setup(
         'orjson',
         'tabulate',
         'dataclasses',
-        'python-dateutil'
+        'python-dateutil',
+        'pymysql',
+        'aiohttp'
     ],
     entry_points={
         'console_scripts': [

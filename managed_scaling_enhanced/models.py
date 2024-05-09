@@ -1,18 +1,24 @@
 from datetime import datetime
 
-from sqlalchemy import Column, String, JSON, DateTime, Integer, Float, Index, Boolean
+import enum
+from sqlalchemy import Column, String, JSON, DateTime, Integer, Float, Index, Boolean, Text, BigInteger, Enum
 import pprint
 from managed_scaling_enhanced.database import Base, engine
 import requests
 from managed_scaling_enhanced.utils import ec2_types
 
 
+class ResizePolicy(enum.Enum):
+    CPU_BASED = 'CPU_BASED'
+    RESOURCE_BASED = 'RESOURCE_BASED'
+
+
 class Cluster(Base):
     __tablename__ = 'clusters'
 
-    id = Column(String, primary_key=True)
-    cluster_name = Column(String)
-    cluster_group = Column(String)
+    id = Column(String(20), primary_key=True)
+    cluster_name = Column(String(20))
+    cluster_group = Column(String(20))
     cpu_usage_upper_bound = Column(Float, default=0.6)
     cpu_usage_lower_bound = Column(Float, default=0.4)
     cpu_usage_period_minutes = Column(Float, default=15)
@@ -23,25 +29,26 @@ class Cluster(Base):
     current_managed_scaling_policy = Column(JSON)
     instance_fleets = Column(JSON)
     instance_groups = Column(JSON)
-    # instances_latest_ready_time = Column(DateTime)
-    yarn_metrics = Column(JSON)
-    cpu_usage = Column(Float)
-    master_dns_name = Column(String)
+    master_dns_name = Column(String(100))
     max_capacity_limit = Column(Integer)
+    scale_in_factor = Column(Float, default=1)
+    scale_out_factor = Column(Float, default=1)
     active = Column(Boolean, default=True)
+    resize_policy = Column(Enum(ResizePolicy), default=ResizePolicy.CPU_BASED)
 
     def to_dict(self):
         d = {
             'Cluster ID': self.id,
             'CPU usage lower bound': self.cpu_usage_lower_bound,
             'CPU usage upper bound': self.cpu_usage_upper_bound,
-            'CPU usage': self.cpu_usage,
             'Spot capacity': self.current_task_spot_capacity,
             'OD capacity': self.current_task_od_capacity,
             'Initial max capacity': self.initial_max_units,
             'Current Max capacity': self.current_max_units,
             'Current Min capacity': self.current_min_units,
-            'Max capacity limit': self.max_capacity_limit
+            'Max capacity limit': self.max_capacity_limit,
+            'Scale in factor': self.scale_in_factor,
+            'Scale out factor': self.scale_out_factor
         }
         return d
 
@@ -78,11 +85,6 @@ class Cluster(Base):
             for fleet in self.instance_fleets:
                 if fleet['InstanceFleetType'] == 'TASK':
                     return fleet
-
-    # @property
-    # def task_instance_fleet_status(self):
-    #     if self.task_instance_fleet:
-    #         return self.task_instance_fleet['Status']['State']
 
     @property
     def not_resizing(self):
@@ -187,7 +189,7 @@ class Event(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     run_id = Column(Integer, index=True)
-    action = Column(String)
+    action = Column(String(255))
     cluster_id = Column(Integer)
     event_time = Column(DateTime)
     data = Column(JSON)
@@ -196,7 +198,7 @@ class Event(Base):
 class CpuUsage(Base):
     __tablename__ = 'cpu_usage'
     id = Column(Integer, primary_key=True, autoincrement=True)
-    instance_id = Column(String)
+    instance_id = Column(String(20))
     total_seconds = Column(Float)
     idle_seconds = Column(Float)
     event_time = Column(DateTime, index=True)
@@ -213,14 +215,72 @@ class CpuUsage(Base):
 class EMREvent(Base):
     __tablename__ = 'emr_events'
     id = Column(Integer, primary_key=True, autoincrement=True)
-    event_type = Column(String)
-    cluster_id = Column(String)
-    source = Column(String)
-    state = Column(String)
-    message = Column(String)
+    event_type = Column(String(20))
+    cluster_id = Column(String(20))
+    source = Column(String(20))
+    state = Column(String(20))
+    message = Column(Text)
     raw_message = Column(JSON)
     event_time = Column(DateTime, index=True)
     create_time = Column(DateTime, index=True)
+
+
+class Metric(Base):
+    __tablename__ = 'metrics'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    cluster_id = Column(String(20))
+    yarn_app_running = Column(Integer)
+    yarn_app_pending = Column(Integer)
+
+    yarn_reserved_mem = Column(Integer)
+    yarn_pending_mem = Column(Integer)
+    yarn_allocated_mem = Column(Integer)
+    yarn_available_mem = Column(Integer)
+    yarn_total_mem = Column(Integer)
+
+    yarn_reserved_vcore = Column(Integer)
+    yarn_pending_vcore = Column(Integer)
+    yarn_allocated_vcore = Column(Integer)
+    yarn_available_vcore = Column(Integer)
+    yarn_total_vcore = Column(Integer)
+
+    total_cpu_seconds = Column(BigInteger)
+    idle_cpu_seconds = Column(BigInteger)
+
+    event_time = Column(DateTime, index=True)
+
+    __table_args__ = (
+        Index('idx_cluster_id_time', 'cluster_id', 'event_time'),
+    )
+
+
+class AvgMetric(Base):
+    __tablename__ = 'avg_metrics'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    cluster_id = Column(String(20))
+    lookback_period = Column(Integer)
+    yarn_app_running = Column(Integer)
+    yarn_app_pending = Column(Integer)
+
+    yarn_reserved_mem = Column(Integer)
+    yarn_pending_mem = Column(Integer)
+    yarn_allocated_mem = Column(Integer)
+    yarn_available_mem = Column(Integer)
+    yarn_total_mem = Column(Integer)
+
+    yarn_reserved_vcore = Column(Integer)
+    yarn_pending_vcore = Column(Integer)
+    yarn_allocated_vcore = Column(Integer)
+    yarn_available_vcore = Column(Integer)
+    yarn_total_vcore = Column(Integer)
+
+    cpu_utilization = Column(Float)
+
+    event_time = Column(DateTime, index=True)
+
+    __table_args__ = (
+        Index('idx_cluster_id_time', 'cluster_id', 'event_time'),
+    )
 
 
 Base.metadata.create_all(engine)
