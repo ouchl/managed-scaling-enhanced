@@ -86,7 +86,7 @@ def get_cpu_time(cluster: Cluster, metric: Metric):
             return await asyncio.gather(*tasks)
 
     result = asyncio.run(fetch_all())
-
+    # logger.info(f'Cpu time result: {result}')
     total_seconds = 0
     idle_seconds = 0
     for response in result:
@@ -117,6 +117,7 @@ def collect_metrics(cluster: Cluster):
     metric.yarn_available_vcore = yarn_metrics.get('availableVirtualCores')
     metric.yarn_reserved_vcore = yarn_metrics.get('reservedVirtualCores')
     metric.yarn_total_vcore = yarn_metrics.get('totalVirtualCores')
+    metric.yarn_active_nodes = yarn_metrics.get('activeNodes')
     metric.event_time = datetime.utcnow()
     return metric
 
@@ -124,7 +125,7 @@ def collect_metrics(cluster: Cluster):
 def get_lookback_metrics(cluster, session):
     metrics = (session.query(Metric).filter(Metric.cluster_id == cluster.id,
                                             Metric.event_time > (datetime.utcnow() - timedelta(
-                                                minutes=cluster.cpu_usage_period_minutes)))
+                                                minutes=cluster.metrics_lookback_period_minutes)))
                .order_by(Metric.event_time)
                .all())
     return metrics
@@ -132,7 +133,7 @@ def get_lookback_metrics(cluster, session):
 
 def collect_avg_metrics(cluster, lb_metrics):
     avg_metric = AvgMetric()
-    avg_metric.lookback_period = cluster.cpu_usage_period_minutes
+    avg_metric.lookback_period = cluster.metrics_lookback_period_minutes
     avg_metric.cluster_id = cluster.id
     avg_metric.event_time = datetime.utcnow()
     for field in inspect(AvgMetric).columns.keys():

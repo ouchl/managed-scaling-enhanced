@@ -140,6 +140,7 @@ def compute_target_max_units(cluster: Cluster, avg_metric: AvgMetric):
             step2 = - (1 - (avg_metric.yarn_allocated_vcore + avg_metric.yarn_reserved_vcore) / avg_metric.yarn_total_vcore) * cluster.current_max_units
             step = max(step1, step2)
             step = min(step, 0)
+    logger.info(f'Computed step: {step}')
     if step > 0:
         step = math.ceil(step * cluster.scale_out_factor)
     elif step < 0:

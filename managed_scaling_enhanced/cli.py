@@ -1,7 +1,7 @@
 import click
 
 from managed_scaling_enhanced.database import Session
-from managed_scaling_enhanced.models import Cluster
+from managed_scaling_enhanced.models import Cluster, ResizePolicy
 from apscheduler.schedulers.background import BackgroundScheduler
 from managed_scaling_enhanced.run import run
 import time
@@ -23,20 +23,22 @@ def cli():
 @click.option('--cluster-group', default=None, help='EMR cluster group')
 @click.option('--cpu-usage-upper-bound', default=0.6)
 @click.option('--cpu-usage-lower-bound', default=0.4)
-@click.option('--cpu-usage-period-minutes', default=15)
+@click.option('--metrics-lookback-period-minutes', default=15)
 @click.option('--cool-down-period-minutes', default=5)
 @click.option('--scale-in-factor', default=1)
 @click.option('--scale-out-factor', default=1)
 @click.option('--max-capacity-limit', help='Maximum capacity limit')
+@click.option('--resize-policy', default=ResizePolicy.CPU_BASED)
 def add(cluster_id, cluster_name, cluster_group, cpu_usage_upper_bound, cpu_usage_lower_bound,
-        cpu_usage_period_minutes, cool_down_period_minutes, max_capacity_limit, scale_in_factor, scale_out_factor):
+        metrics_lookback_period_minutes, cool_down_period_minutes, max_capacity_limit,
+        scale_in_factor, scale_out_factor, resize_policy):
     """Add an EMR cluster to be managed by this tool."""
     session = Session()
     cluster = Cluster(id=cluster_id, cluster_name=cluster_name,
                       cluster_group=cluster_group, cpu_usage_upper_bound=cpu_usage_upper_bound,
-                      cpu_usage_lower_bound=cpu_usage_lower_bound, cpu_usage_period_minutes=cpu_usage_period_minutes,
+                      cpu_usage_lower_bound=cpu_usage_lower_bound, metrics_lookback_period_minutes=metrics_lookback_period_minutes,
                       cool_down_period_minutes=cool_down_period_minutes, max_capacity_limit=max_capacity_limit,
-                      scale_in_factor=scale_in_factor, scale_out_factor=scale_out_factor)
+                      scale_in_factor=scale_in_factor, scale_out_factor=scale_out_factor, resize_policy=resize_policy)
     cluster.initial_managed_scaling_policy = emr_client.get_managed_scaling_policy(ClusterId=cluster.id)['ManagedScalingPolicy']
     cluster.current_managed_scaling_policy = cluster.initial_managed_scaling_policy
     if max_capacity_limit is None:

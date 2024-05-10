@@ -21,7 +21,7 @@ class Cluster(Base):
     cluster_group = Column(String(20))
     cpu_usage_upper_bound = Column(Float, default=0.6)
     cpu_usage_lower_bound = Column(Float, default=0.4)
-    cpu_usage_period_minutes = Column(Float, default=15)
+    metrics_lookback_period_minutes = Column(Float, default=15)
     cool_down_period_minutes = Column(Float, default=5)
     last_scale_in_ts = Column(DateTime, default=datetime.min)
     last_scale_out_ts = Column(DateTime, default=datetime.min)
@@ -48,7 +48,8 @@ class Cluster(Base):
             'Current Min capacity': self.current_min_units,
             'Max capacity limit': self.max_capacity_limit,
             'Scale in factor': self.scale_in_factor,
-            'Scale out factor': self.scale_out_factor
+            'Scale out factor': self.scale_out_factor,
+            'Resize policy': str(self.resize_policy)
         }
         return d
 
@@ -258,6 +259,8 @@ class Metric(Base):
     yarn_available_vcore = Column(Integer)
     yarn_total_vcore = Column(Integer)
 
+    yarn_active_nodes = Column(Integer)
+
     total_cpu_seconds = Column(BigInteger)
     idle_cpu_seconds = Column(BigInteger)
 
@@ -287,6 +290,8 @@ class AvgMetric(Base):
     yarn_allocated_vcore = Column(Integer)
     yarn_available_vcore = Column(Integer)
     yarn_total_vcore = Column(Integer)
+
+    yarn_active_nodes = Column(Integer)
 
     cpu_utilization = Column(Float)
 

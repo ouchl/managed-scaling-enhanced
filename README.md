@@ -24,7 +24,8 @@ export api_host=
 Add cluster
 ```
 mse add-cluster --cluster-id j-xxxxx --cpu-usage-upper-bound 0.6 \
---cpu-usage-lower-bound 0.4 --cpu-usage-period-minutes 15 --cool-down-period-minutes 5 --max-capacity-limit 100
+--cpu-usage-lower-bound 0.4 --metrics-lookback-period-minutes 15 --cool-down-period-minutes 5 --max-capacity-limit 100 \
+--resize-policy CPU_BASED --scale-in-factor 1 --scale-out-factor 1
 ```
 Check other cluster options
 ```
