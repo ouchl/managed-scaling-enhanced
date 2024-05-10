@@ -155,15 +155,6 @@ def compute_target_max_units(cluster: Cluster, avg_metric: AvgMetric):
 def scale_in(cluster: Cluster, target_units, dry_run: bool = False) -> bool:
     delta = cluster.current_max_units - target_units
     logger.info(f'Starting cluster {cluster.id} scaling in...')
-    new_od_capacity = cluster.current_task_od_capacity
-    new_spot_capacity = cluster.current_task_spot_capacity
-    if new_spot_capacity >= delta:
-        new_spot_capacity -= delta
-    else:
-        delta -= new_spot_capacity
-        new_spot_capacity = 0
-        new_od_capacity -= delta
-    new_od_capacity = max(new_od_capacity, 0)
     changes = [ParameterChange(parameter='MaximumCapacityUnits',
                                before=cluster.current_max_units, after=str(target_units))]
 
@@ -174,6 +165,15 @@ def scale_in(cluster: Cluster, target_units, dry_run: bool = False) -> bool:
                                               ManagedScalingPolicy=cluster.current_managed_scaling_policy)
 
     if cluster.managed_scaling_unit_type == 'InstanceFleetUnits':
+        new_od_capacity = cluster.current_task_od_capacity
+        new_spot_capacity = cluster.current_task_spot_capacity
+        if new_spot_capacity >= delta:
+            new_spot_capacity -= delta
+        else:
+            delta -= new_spot_capacity
+            new_spot_capacity = 0
+            new_od_capacity -= delta
+        new_od_capacity = max(new_od_capacity, 0)
         changes.append(ParameterChange(parameter='TargetOnDemandCapacity', before=cluster.task_target_od_capacity,
                        after=str(new_od_capacity)))
         changes.append(ParameterChange(parameter='TargetSpotCapacity', before=cluster.task_target_spot_capacity,

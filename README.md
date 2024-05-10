@@ -41,3 +41,12 @@ Start the scheduler with dry run mode. This will only evaluate the cluster but n
 mse start --schedule-interval 60 --dry-run
 ```
 You can find the log in the log directory.
+
+Reset cluster to its initial max units
+```
+mse reset --cluster-id j-xxxx
+```
+Reset all clusters
+```
+mse reset -a
+```
