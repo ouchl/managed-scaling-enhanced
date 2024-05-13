@@ -95,16 +95,17 @@ class Cluster(Base):
                     return fleet
 
     @property
-    def not_resizing(self):
+    def is_resizing(self):
+        flag = False
         if self.is_fleet:
             for fleet in self.instance_fleets:
                 if fleet['Status']['State'] != 'RUNNING':
-                    return False
+                    flag = True
         else:
             for group in self.instance_groups:
                 if group['Status']['State'] != 'RUNNING':
-                    return False
-        return True
+                    flag = True
+        return flag
 
     @property
     def task_target_od_capacity(self):
@@ -198,11 +199,13 @@ class Event(Base):
     __tablename__ = 'events'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    run_id = Column(Integer, index=True)
     action = Column(String(255))
     cluster_id = Column(String(20))
-    event_time = Column(DateTime)
-    max_units = Column(Integer)
+    event_time = Column(DateTime, index=True)
+    current_max_units = Column(Integer)
+    target_max_units = Column(Integer)
+    is_resizing = Column(Boolean)
+    is_cooling_down = Column(Boolean)
     data = Column(JSON)
 
     __table_args__ = (
@@ -213,17 +216,18 @@ class Event(Base):
 class CpuUsage(Base):
     __tablename__ = 'cpu_usage'
     id = Column(Integer, primary_key=True, autoincrement=True)
+    cluster_id = Column(String(20))
     instance_id = Column(String(20))
     total_seconds = Column(Float)
     idle_seconds = Column(Float)
     event_time = Column(DateTime, index=True)
 
     __table_args__ = (
-        Index('idx_instance_id_time', 'instance_id', 'event_time'),
+        Index('idx_cluster_instance_time', 'cluster_id', 'instance_id', 'event_time'),
     )
 
     @property
-    def busy_time(self):
+    def busy_seconds(self):
         return self.total_seconds - self.idle_seconds
 
 

@@ -1,5 +1,6 @@
 from typing import List
 
+from managed_scaling_enhanced import boto3_config
 from managed_scaling_enhanced.models import Cluster, AvgMetric, ResizePolicy, Event
 import logging
 from datetime import datetime
@@ -11,7 +12,7 @@ from managed_scaling_enhanced.utils import ec2_types
 from sqlalchemy import desc
 
 logger = logging.getLogger(__name__)
-emr_client = boto3.client('emr')
+emr_client = boto3.client('emr', config=boto3_config)
 
 
 @dataclass
@@ -79,34 +80,41 @@ def resize_cluster(cluster, session, dry_run):
     # logger.info(f'------------------------------- Check Results ---------------------------\n{table}')
     target_units = compute_target_max_units(cluster, avg_metric)
     logger.info(f'Computed target units: {target_units}')
-    if target_units == cluster.current_max_units:
-        logger.info(f'Skip cluster {cluster.id}. Target unit: {target_units}. Current max units: {cluster.current_max_units}')
-        return
-    if not cluster.not_resizing:
-        logger.info(f'Skip resizing cluster {cluster.id}.')
-        if not dry_run:
-            return
-    last_action_time = max(cluster.last_scale_in_ts, cluster.last_scale_out_ts)
-    last_action_seconds = (datetime.utcnow() - last_action_time).total_seconds()
-    if last_action_seconds < cluster.cool_down_period_minutes * 60:
-        logger.info(f'Skip cooling down cluster {cluster.id}.')
-        if not dry_run:
-            return
-    action = 'nothing'
-    if target_units < cluster.current_max_units:
-        logger.info(f'------------------- Start to scale in ----------------------')
-        scale_in(cluster, target_units, dry_run)
-        action = 'scale in'
-        logger.info(f'------------------- Finished scaling in ----------------------')
-    elif target_units > cluster.current_max_units:
-        logger.info(f'------------------- Start to scale out ----------------------')
-        scale_out(cluster, target_units, dry_run)
-        logger.info(f'------------------- Finished scaling out ----------------------')
-        action = 'scale out'
+    # if target_units == cluster.current_max_units:
+    #     logger.info(f'Skip cluster {cluster.id}. Target unit: {target_units}. Current max units: {cluster.current_max_units}')
+    #     return
+
     event = Event()
     event.cluster_id = cluster.id
     event.event_time = datetime.utcnow()
-    event.max_units = target_units
+    event.current_max_units = cluster.current_max_units
+    event.target_max_units = target_units
+    event.is_resizing = cluster.is_resizing
+    last_action_time = max(cluster.last_scale_in_ts, cluster.last_scale_out_ts)
+    last_action_seconds = (datetime.utcnow() - last_action_time).total_seconds()
+    event.is_cooling_down = last_action_seconds < cluster.cool_down_period_minutes * 60
+    action_flag = True
+    if cluster.is_resizing:
+        logger.info(f'Skip resizing cluster {cluster.id}.')
+        action_flag = False
+    if event.is_cooling_down:
+        logger.info(f'Skip cooling down cluster {cluster.id}.')
+        action_flag = False
+    if dry_run:
+        action_flag = True
+    action = 'nothing'
+    if action_flag:
+        if target_units < cluster.current_max_units:
+            logger.info(f'------------------- Start to scale in ----------------------')
+            scale_in(cluster, target_units, dry_run)
+            action = 'scale in'
+            logger.info(f'------------------- Finished scaling in ----------------------')
+        elif target_units > cluster.current_max_units:
+            logger.info(f'------------------- Start to scale out ----------------------')
+            scale_out(cluster, target_units, dry_run)
+            logger.info(f'------------------- Finished scaling out ----------------------')
+            action = 'scale out'
+
     event.action = action
     session.add(event)
     session.commit()

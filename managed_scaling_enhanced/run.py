@@ -4,14 +4,14 @@ from orjson import orjson
 from dateutil import parser
 
 from managed_scaling_enhanced.database import Session
-from managed_scaling_enhanced.models import Cluster, CpuUsage, EMREvent, Event
+from managed_scaling_enhanced.models import EMREvent, Event
 import logging
 from managed_scaling_enhanced.scale import resize_cluster
 from managed_scaling_enhanced.metrics import *
 
 logger = logging.getLogger(__name__)
-emr_client = boto3.client('emr')
-ec2_client = boto3.client('ec2')
+emr_client = boto3.client('emr', config=boto3_config)
+ec2_client = boto3.client('ec2', config=boto3_config)
 sqs = boto3.client('sqs')
 
 
@@ -41,11 +41,17 @@ def do_run(cluster: Cluster, dry_run, session):
     logger.info(f'Collected metrics: {metric.__dict__}')
     session.add(metric)
     session.commit()
+    # Update instances cpu time
+    cpu_utilization = get_cpu_utilization(cluster, session)
+    if cpu_utilization is None:
+        logger.info(f'Skipping cluster {cluster.id} no cpu utilization is found.')
+        return
     lb_metrics = get_lookback_metrics(cluster, session)
     if len(lb_metrics) < 2:
         logger.info(f'Skipping cluster {cluster.id} because there are not enough metrics.')
         return
     avg_metric = collect_avg_metrics(cluster, lb_metrics)
+    avg_metric.cpu_utilization = cpu_utilization
     session.add(avg_metric)
     session.commit()
     resize_cluster(cluster, session, dry_run)
@@ -58,6 +64,8 @@ def clean(session):
     session.query(Event).filter(Event.event_time < (datetime.utcnow() - timedelta(days=retention_days))).delete(
         synchronize_session=False)
     session.query(EMREvent).filter(EMREvent.event_time < (datetime.utcnow() - timedelta(days=retention_days))).delete(
+        synchronize_session=False)
+    session.query(CpuUsage).filter(CpuUsage.event_time < (datetime.utcnow() - timedelta(days=1))).delete(
         synchronize_session=False)
 
 

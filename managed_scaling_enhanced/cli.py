@@ -1,5 +1,6 @@
 import click
 
+from managed_scaling_enhanced import boto3_config
 from managed_scaling_enhanced.database import Session
 from managed_scaling_enhanced.models import Cluster, ResizePolicy
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -9,7 +10,7 @@ import boto3
 import random
 from tabulate import tabulate
 
-emr_client = boto3.client('emr')
+emr_client = boto3.client('emr', config=boto3_config)
 
 
 @click.group()
@@ -36,10 +37,12 @@ def add(cluster_id, cluster_name, cluster_group, cpu_usage_upper_bound, cpu_usag
     session = Session()
     cluster = Cluster(id=cluster_id, cluster_name=cluster_name,
                       cluster_group=cluster_group, cpu_usage_upper_bound=cpu_usage_upper_bound,
-                      cpu_usage_lower_bound=cpu_usage_lower_bound, metrics_lookback_period_minutes=metrics_lookback_period_minutes,
+                      cpu_usage_lower_bound=cpu_usage_lower_bound,
+                      metrics_lookback_period_minutes=metrics_lookback_period_minutes,
                       cool_down_period_minutes=cool_down_period_minutes, max_capacity_limit=max_capacity_limit,
                       scale_in_factor=scale_in_factor, scale_out_factor=scale_out_factor, resize_policy=resize_policy)
-    cluster.initial_managed_scaling_policy = emr_client.get_managed_scaling_policy(ClusterId=cluster.id)['ManagedScalingPolicy']
+    cluster.initial_managed_scaling_policy = emr_client.get_managed_scaling_policy(ClusterId=cluster.id)[
+        'ManagedScalingPolicy']
     cluster.current_managed_scaling_policy = cluster.initial_managed_scaling_policy
     if max_capacity_limit is None:
         cluster.max_capacity_limit = cluster.initial_max_units
@@ -159,8 +162,8 @@ def run_test_job(cluster_id, job_number, num_executors, executor_memory, executo
                 '--deploy-mode', 'cluster',
                 '--master', 'yarn',
                 '--executor-memory', executor_memory,
-                '--num-executors', num_executors,
-                '--executor-cores', executor_cores,
+                '--num-executors', str(num_executors),
+                '--executor-cores', str(executor_cores),
                 "--conf", "spark.dynamicAllocation.enabled=false",
                 '--class', 'org.apache.spark.examples.SparkPi',
                 '/usr/lib/spark/examples/jars/spark-examples.jar',
@@ -168,12 +171,42 @@ def run_test_job(cluster_id, job_number, num_executors, executor_memory, executo
             ]
         }
     }
-    client = boto3.client('emr')
     for _ in range(job_number):
-        client.add_job_flow_steps(
+        emr_client.add_job_flow_steps(
             JobFlowId=cluster_id,
             Steps=[step]
         )
+
+
+@click.command()
+@click.option('--dry-run', is_flag=True, help='Dry run mode')
+def test(dry_run):
+    ctx = click.get_current_context()
+    # for cluster in clusters:
+    #     ctx.invoke(run_test_job, cluster_id=cluster.id, job_number=10)
+
+    def run_or_kill():
+        session = Session()
+        clusters = session.query(Cluster).filter(Cluster.active == True).all()
+        for cluster in clusters:
+            if random.choice([True, False]):
+                job_number = random.randint(1, 5)
+                ctx.invoke(run_test_job, cluster_id=cluster.id, job_number=job_number, num_executors='10')
+            else:
+                job_number = random.randint(1, 5)
+                ctx.invoke(kill_test_job, cluster_id=cluster.id, job_number=job_number)
+        session.close()
+
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(run_or_kill, 'interval', seconds=60*5)
+    scheduler.add_job(run, 'interval', args=[dry_run, None], seconds=30)
+    scheduler.start()
+    try:
+        while True:
+            time.sleep(1)
+    except (KeyboardInterrupt, SystemExit):
+        scheduler.shutdown()
+        click.echo("Scheduler shutdown successfully.")
 
 
 @click.command()
@@ -255,6 +288,7 @@ cli.add_command(start, 'start')
 cli.add_command(reset, 'reset')
 cli.add_command(disable_cluster, 'disable-cluster')
 cli.add_command(enable_cluster, 'enable-cluster')
+cli.add_command(test, 'test')
 
 if __name__ == '__main__':
     cli()

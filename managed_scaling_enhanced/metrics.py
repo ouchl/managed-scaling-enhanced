@@ -2,7 +2,9 @@ import asyncio
 
 import aiohttp
 import boto3
-from managed_scaling_enhanced.models import Cluster, Metric, AvgMetric
+
+from managed_scaling_enhanced import boto3_config
+from managed_scaling_enhanced.models import Cluster, Metric, AvgMetric, CpuUsage
 from dataclasses import dataclass
 import requests
 import os
@@ -13,11 +15,12 @@ import statistics
 
 logger = logging.getLogger(__name__)
 
-emr_client = boto3.client('emr')
+emr_client = boto3.client('emr', config=boto3_config)
 
 
 @dataclass
 class Instance:
+    cluster_id: str
     instance_id: str
     host_name: str
 
@@ -35,7 +38,8 @@ def get_instances_native(cluster: Cluster):
     )
     for page in response_iterator:
         for instance in page['Instances']:
-            instances.append(Instance(instance_id=instance['Ec2InstanceId'],
+            instances.append(Instance(cluster_id=cluster.id,
+                                      instance_id=instance['Ec2InstanceId'],
                                       host_name=instance['PublicDnsName'] or instance['PrivateDnsName']))
     return instances
 
@@ -49,7 +53,7 @@ def get_instances_proxy(host: str, cluster: Cluster):
     if 'TASK' in data:
         ips += data['TASK']
     for ip in ips:
-        instances.append(Instance(instance_id=f'{cluster.id},{ip}', host_name=ip))
+        instances.append(Instance(cluster_id=cluster.id, instance_id=f'{ip}', host_name=ip))
     return instances
 
 
@@ -63,9 +67,25 @@ def get_instances(cluster: Cluster):
     return instances
 
 
-async def fetch_cpu_time(session, url):
+async def fetch_cpu_time(session, instance):
+    url = f'http://{instance.host_name}:9100/metrics'
     async with session.get(url) as response:
-        return await response.text()
+        total_seconds = 0
+        idle_seconds = 0
+        resp_text = await response.text()
+        for line in resp_text.splitlines():
+            if line.startswith('node_cpu_seconds_total'):
+                seconds = float(line.split(' ')[1])
+                total_seconds += seconds
+                if 'mode="idle"' in line:
+                    idle_seconds += seconds
+        cpu_usage = CpuUsage()
+        cpu_usage.cluster_id = instance.cluster_id
+        cpu_usage.instance_id = instance.instance_id
+        cpu_usage.total_seconds = total_seconds
+        cpu_usage.idle_seconds = idle_seconds
+        cpu_usage.event_time = datetime.utcnow()
+        return cpu_usage
 
 
 def get_current_yarn_metrics(dns_name):
@@ -74,36 +94,41 @@ def get_current_yarn_metrics(dns_name):
     return {k: v for k, v in response.json().get('clusterMetrics', {}).items() if not k.endswith('AcrossPartition')}
 
 
-def get_cpu_time(cluster: Cluster, metric: Metric):
+def get_cpu_utilization(cluster: Cluster, db_session):
     instances = get_instances(cluster)
-    url_list = [f'http://{instance.host_name}:9100/metrics' for instance in instances]
-
-    # logger.info(url_list)
 
     async def fetch_all():
-        async with aiohttp.ClientSession() as session:
-            tasks = [fetch_cpu_time(session, url) for url in url_list]
+        timeout = aiohttp.ClientTimeout(total=5)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            tasks = [fetch_cpu_time(session, instance) for instance in instances]
             return await asyncio.gather(*tasks)
 
-    result = asyncio.run(fetch_all())
-    # logger.info(f'Cpu time result: {result}')
-    total_seconds = 0
-    idle_seconds = 0
-    for response in result:
-        for line in response.splitlines():
-            if line.startswith('node_cpu_seconds_total'):
-                seconds = float(line.split(' ')[1])
-                total_seconds += seconds
-                if 'mode="idle"' in line:
-                    idle_seconds += seconds
-    metric.total_cpu_seconds = total_seconds
-    metric.idle_cpu_seconds = idle_seconds
+    old_total = 0
+    old_busy = 0
+    new_total = 0
+    new_busy = 0
+    cpu_usages = asyncio.run(fetch_all())
+    for cpu_usage in cpu_usages:
+        old_cpu_usage = (db_session.query(CpuUsage).filter(CpuUsage.cluster_id == cluster.id,
+                                                           CpuUsage.instance_id == cpu_usage.instance_id,
+                                                           CpuUsage.event_time > (datetime.utcnow() - timedelta(
+                                                               minutes=cluster.metrics_lookback_period_minutes)))
+                         .order_by(CpuUsage.event_time)
+                         .first())
+        if old_cpu_usage:
+            old_total += old_cpu_usage.total_seconds
+            old_busy += old_cpu_usage.busy_seconds
+            new_total += cpu_usage.total_seconds
+            new_busy += cpu_usage.busy_seconds
+    db_session.add_all(cpu_usages)
+    db_session.commit()
+    if new_total != 0:
+        return (new_busy - old_busy) / (new_total - old_total)
 
 
 def collect_metrics(cluster: Cluster):
     metric = Metric()
     metric.cluster_id = cluster.id
-    get_cpu_time(cluster, metric)
     yarn_metrics = get_current_yarn_metrics(cluster.master_dns_name)
     metric.yarn_app_pending = yarn_metrics.get('appsPending')
     metric.yarn_app_running = yarn_metrics.get('appsRunning')
@@ -140,7 +165,4 @@ def collect_avg_metrics(cluster, lb_metrics):
         if field.startswith('yarn'):
             data = [getattr(metric, field) for metric in lb_metrics]
             setattr(avg_metric, field, statistics.mean(data))
-    idle_time = lb_metrics[-1].idle_cpu_seconds - lb_metrics[0].idle_cpu_seconds
-    total_time = lb_metrics[-1].total_cpu_seconds - lb_metrics[0].total_cpu_seconds
-    avg_metric.cpu_utilization = (total_time-idle_time) / total_time
     return avg_metric
