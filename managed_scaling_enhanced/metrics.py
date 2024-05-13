@@ -69,23 +69,27 @@ def get_instances(cluster: Cluster):
 
 async def fetch_cpu_time(session, instance):
     url = f'http://{instance.host_name}:9100/metrics'
-    async with session.get(url) as response:
-        total_seconds = 0
-        idle_seconds = 0
-        resp_text = await response.text()
-        for line in resp_text.splitlines():
-            if line.startswith('node_cpu_seconds_total'):
-                seconds = float(line.split(' ')[1])
-                total_seconds += seconds
-                if 'mode="idle"' in line:
-                    idle_seconds += seconds
-        cpu_usage = CpuUsage()
-        cpu_usage.cluster_id = instance.cluster_id
-        cpu_usage.instance_id = instance.instance_id
-        cpu_usage.total_seconds = total_seconds
-        cpu_usage.idle_seconds = idle_seconds
-        cpu_usage.event_time = datetime.utcnow()
-        return cpu_usage
+    try:
+        async with session.get(url) as response:
+            total_seconds = 0
+            idle_seconds = 0
+            resp_text = await response.text()
+            for line in resp_text.splitlines():
+                if line.startswith('node_cpu_seconds_total'):
+                    seconds = float(line.split(' ')[1])
+                    total_seconds += seconds
+                    if 'mode="idle"' in line:
+                        idle_seconds += seconds
+            cpu_usage = CpuUsage()
+            cpu_usage.cluster_id = instance.cluster_id
+            cpu_usage.instance_id = instance.instance_id
+            cpu_usage.total_seconds = total_seconds
+            cpu_usage.idle_seconds = idle_seconds
+            cpu_usage.event_time = datetime.utcnow()
+            return cpu_usage
+    except Exception as e:
+        logger.info(f'Error get cpu usage of instance {instance.host_name}. Error: {e}')
+        return None
 
 
 def get_current_yarn_metrics(dns_name):
@@ -101,7 +105,12 @@ def get_cpu_utilization(cluster: Cluster, db_session):
         timeout = aiohttp.ClientTimeout(total=5)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             tasks = [fetch_cpu_time(session, instance) for instance in instances]
-            return await asyncio.gather(*tasks)
+            results = await asyncio.gather(*tasks)
+            data_list = []
+            for result in results:
+                if result is not None:
+                    data_list.append(result)
+            return data_list
 
     old_total = 0
     old_busy = 0
