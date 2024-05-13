@@ -209,7 +209,7 @@ class Event(Base):
     data = Column(JSON)
 
     __table_args__ = (
-        Index('idx_cluster_id_time', 'cluster_id', 'event_time'),
+        Index('idx_event_cluster_id_time', 'cluster_id', 'event_time'),
     )
 
 
@@ -223,7 +223,7 @@ class CpuUsage(Base):
     event_time = Column(DateTime, index=True)
 
     __table_args__ = (
-        Index('idx_cluster_instance_time', 'cluster_id', 'instance_id', 'event_time'),
+        Index('idx_cpu_usage_cluster_instance_time', 'cluster_id', 'instance_id', 'event_time'),
     )
 
     @property
@@ -271,7 +271,7 @@ class Metric(Base):
     event_time = Column(DateTime, index=True)
 
     __table_args__ = (
-        Index('idx_cluster_id_time', 'cluster_id', 'event_time'),
+        Index('idx_metrics_cluster_id_time', 'cluster_id', 'event_time'),
     )
 
 
@@ -302,7 +302,7 @@ class AvgMetric(Base):
     event_time = Column(DateTime, index=True)
 
     __table_args__ = (
-        Index('idx_cluster_id_time', 'cluster_id', 'event_time'),
+        Index('idx_avg_metrics_cluster_id_time', 'cluster_id', 'event_time'),
     )
 
 

@@ -29,7 +29,7 @@ def cli():
 @click.option('--scale-in-factor', default=1)
 @click.option('--scale-out-factor', default=1)
 @click.option('--max-capacity-limit', help='Maximum capacity limit')
-@click.option('--resize-policy', default=ResizePolicy.CPU_BASED)
+@click.option('--resize-policy', default=ResizePolicy.CPU_BASED.name)
 def add(cluster_id, cluster_name, cluster_group, cpu_usage_upper_bound, cpu_usage_lower_bound,
         metrics_lookback_period_minutes, cool_down_period_minutes, max_capacity_limit,
         scale_in_factor, scale_out_factor, resize_policy):
