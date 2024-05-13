@@ -17,7 +17,7 @@ class Cluster(Base):
     __tablename__ = 'clusters'
 
     id = Column(String(20), primary_key=True)
-    cluster_name = Column(String(255))
+    cluster_name = Column(Text)
     cluster_group = Column(String(20))
     cpu_usage_upper_bound = Column(Float, default=0.6)
     cpu_usage_lower_bound = Column(Float, default=0.4)
