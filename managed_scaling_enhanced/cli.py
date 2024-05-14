@@ -55,11 +55,15 @@ def add(cluster_id, cluster_name, cluster_group, cpu_usage_upper_bound, cpu_usag
 @click.option('--cluster-id', required=True, help='EMR cluster ID')
 @click.option('--cpu-usage-upper-bound')
 @click.option('--cpu-usage-lower-bound')
-@click.option('--cpu-usage-period-minutes')
+@click.option('--metrics-lookback-period-minutes')
 @click.option('--cool-down-period-minutes')
 @click.option('--max-capacity-limit')
+@click.option('--resize-policy')
+@click.option('--scale-in-factor')
+@click.option('--scale-out-factor')
 def modify(cluster_id, cpu_usage_upper_bound, cpu_usage_lower_bound,
-           cpu_usage_period_minutes, cool_down_period_minutes, max_capacity_limit):
+           metrics_lookback_period_minutes, cool_down_period_minutes,
+           max_capacity_limit, resize_policy, scale_in_factor, scale_out_factor):
     """Modify a cluster configuration"""
     session = Session()
     cluster: Cluster = session.get(Cluster, cluster_id)
@@ -67,12 +71,18 @@ def modify(cluster_id, cpu_usage_upper_bound, cpu_usage_lower_bound,
         cluster.cpu_usage_upper_bound = cpu_usage_upper_bound
     if cpu_usage_lower_bound is not None:
         cluster.cpu_usage_lower_bound = cpu_usage_lower_bound
-    if cpu_usage_period_minutes is not None:
-        cluster.cpu_usage_period_minutes = cpu_usage_period_minutes
+    if metrics_lookback_period_minutes is not None:
+        cluster.metrics_lookback_period_minutes = metrics_lookback_period_minutes
     if cool_down_period_minutes is not None:
         cluster.cool_down_period_minutes = cool_down_period_minutes
     if max_capacity_limit is not None:
         cluster.max_capacity_limit = max_capacity_limit
+    if resize_policy is not None:
+        cluster.resize_policy = resize_policy
+    if scale_in_factor is not None:
+        cluster.scale_in_factor = scale_in_factor
+    if scale_out_factor is not None:
+        cluster.scale_out_factor = scale_out_factor
     session.commit()
     session.close()
 
@@ -86,8 +96,11 @@ def list_cluster():
     for cluster in clusters:
         dicts.append({'Cluster ID': cluster.id,
                       'Cluster Name': cluster.cluster_name,
-                      'CPU Usage Upper Bound': cluster.cpu_usage_upper_bound,
-                      'CPU Usage Lower Bound': cluster.cpu_usage_lower_bound,
+                      'Resize Policy': cluster.resize_policy.name,
+                      'CPU Upper Bound': cluster.cpu_usage_upper_bound,
+                      'CPU Lower Bound': cluster.cpu_usage_lower_bound,
+                      'Max Unit Limit': cluster.max_capacity_limit,
+                      'Lookback Period': cluster.metrics_lookback_period_minutes,
                       'Cool Down': cluster.cool_down_period_minutes})
     table = tabulate(dicts, headers="keys", tablefmt="grid")
     click.echo(table)

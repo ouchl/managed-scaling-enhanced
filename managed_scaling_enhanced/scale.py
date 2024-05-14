@@ -130,24 +130,26 @@ def log_parameters(parameters):
 
 
 def compute_target_max_units(cluster: Cluster, avg_metric: AvgMetric):
-    step = 0
-    if cluster.resize_policy == ResizePolicy.CPU_BASED:
-        logger.info('Use CPU based policy...')
+    # use resource based policy first
+    logger.info('Use resource based policy first.')
+    if avg_metric.yarn_pending_vcore > 0 or avg_metric.yarn_pending_mem > 0:
+        step1 = (avg_metric.yarn_pending_vcore / avg_metric.yarn_total_vcore) * cluster.current_max_units
+        step2 = (avg_metric.yarn_pending_mem / avg_metric.yarn_total_mem) * cluster.current_max_units
+        step = max(step1, step2)
+    else:
+        step1 = - (1 - (
+                    avg_metric.yarn_allocated_mem + avg_metric.yarn_reserved_mem) / avg_metric.yarn_total_mem) * cluster.current_max_units
+        step2 = - (1 - (
+                    avg_metric.yarn_allocated_vcore + avg_metric.yarn_reserved_vcore) / avg_metric.yarn_total_vcore) * cluster.current_max_units
+        step = max(step1, step2)
+        step = min(step, 0)
+
+    if step < 0 and cluster.resize_policy == ResizePolicy.CPU_BASED:
         if avg_metric.cpu_utilization < cluster.cpu_usage_lower_bound:
+            logger.info('Use CPU based policy to scale in')
             step = - (1 - avg_metric.cpu_utilization / cluster.cpu_usage_upper_bound) * cluster.current_max_units
-        elif avg_metric.cpu_utilization > cluster.cpu_usage_upper_bound:
-            step = (avg_metric.cpu_utilization / cluster.cpu_usage_upper_bound - 1) * cluster.current_max_units
-    elif cluster.resize_policy == ResizePolicy.RESOURCE_BASED:
-        logger.info('Use resource based policy...')
-        if avg_metric.yarn_pending_vcore > 0 or avg_metric.yarn_pending_mem > 0:
-            step1 = (avg_metric.yarn_pending_vcore / avg_metric.yarn_total_vcore) * cluster.current_max_units
-            step2 = (avg_metric.yarn_pending_mem / avg_metric.yarn_total_mem) * cluster.current_max_units
-            step = max(step1, step2)
-        else:
-            step1 = - (1 - (avg_metric.yarn_allocated_mem + avg_metric.yarn_reserved_mem) / avg_metric.yarn_total_mem) * cluster.current_max_units
-            step2 = - (1 - (avg_metric.yarn_allocated_vcore + avg_metric.yarn_reserved_vcore) / avg_metric.yarn_total_vcore) * cluster.current_max_units
-            step = max(step1, step2)
-            step = min(step, 0)
+        # elif avg_metric.cpu_utilization > cluster.cpu_usage_upper_bound:
+        #     step = (avg_metric.cpu_utilization / cluster.cpu_usage_upper_bound - 1) * cluster.current_max_units
     if step > 0:
         step = math.ceil(step * cluster.scale_out_factor)
     elif step < 0:
