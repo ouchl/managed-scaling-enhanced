@@ -26,8 +26,8 @@ def cli():
 @click.option('--cpu-usage-lower-bound', default=0.4)
 @click.option('--metrics-lookback-period-minutes', default=15)
 @click.option('--cool-down-period-minutes', default=5)
-@click.option('--scale-in-factor', default=1)
-@click.option('--scale-out-factor', default=1)
+@click.option('--scale-in-factor', default=1.0)
+@click.option('--scale-out-factor', default=1.0)
 @click.option('--max-capacity-limit', help='Maximum capacity limit')
 @click.option('--resize-policy', default=ResizePolicy.CPU_BASED.name)
 def add(cluster_id, cluster_name, cluster_group, cpu_usage_upper_bound, cpu_usage_lower_bound,

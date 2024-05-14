@@ -81,6 +81,11 @@ class Cluster(Base):
             return self.current_managed_scaling_policy['ComputeLimits']['MaximumCoreCapacityUnits']
 
     @property
+    def current_max_od_units(self):
+        if self.current_managed_scaling_policy:
+            return self.current_managed_scaling_policy['ComputeLimits']['MaximumOnDemandCapacityUnits']
+
+    @property
     def task_instance_fleet(self):
         if self.instance_fleets:
             for fleet in self.instance_fleets:
